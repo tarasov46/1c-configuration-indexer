@@ -57,6 +57,8 @@ def build_manifest(index: dict[str, Any], options: PackageOptions) -> dict[str, 
     source_info = index.get("source_info") or {}
     summary = index.get("summary") or {}
     job_id = options.job_id or f"local-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    snapshots = index.get("configuration_snapshots") or []
+    snapshot_ids = [row.get("id") for row in snapshots if row.get("id")]
     return {
         "schema_version": PACKAGE_SCHEMA_VERSION,
         "job_id": job_id,
@@ -67,6 +69,8 @@ def build_manifest(index: dict[str, Any], options: PackageOptions) -> dict[str, 
         "product_code": summary.get("product_code") or project_info.get("product_code") or source_info.get("product_code") or "",
         "release_version": summary.get("release_version") or project_info.get("release_version") or source_info.get("release_version") or "",
         "standard_snapshot_id": summary.get("standard_snapshot_id") or project_info.get("standard_snapshot_id") or "",
+        "snapshot_ids": snapshot_ids,
+        "snapshot_count": len(snapshot_ids),
         "summary": summary,
         "project_info": project_info,
         "source_info": source_info,

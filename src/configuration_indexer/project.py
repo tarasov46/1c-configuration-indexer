@@ -183,19 +183,22 @@ def parse_project(options: ProjectIndexOptions) -> dict:
     impacts = []
 
     for position, extension in enumerate(layout.extensions, start=1):
+        ext_probe = detect_source(extension.path)
+        extension_name_hint = ext_probe.name or extension.name or extension.path.name
+        ext_snapshot_id = make_project_extension_snapshot_id(client_id, base_id, extension_name_hint, ext_probe)
         ext_index = parse_configuration(
             IndexOptions(
                 src_root=extension.path,
                 mode="extension",
                 product_code=product_code,
                 release_version=release_version,
+                snapshot_id=ext_snapshot_id,
                 include_code_text=options.include_code_text,
             )
         )
         indexes.append(ext_index)
 
         ext_info = ext_index["source_info"]
-        ext_snapshot_id = ext_index["configuration_snapshots"][0]["id"]
         extension_name = ext_info.get("name") or extension.name or extension.path.name
         customization_id = f"{base_profile_id}:extension:{safe_id_part(extension_name)}"
         customizations.append(
@@ -332,6 +335,19 @@ def parse_project(options: ProjectIndexOptions) -> dict:
         }
     )
     return merged
+
+
+def make_project_extension_snapshot_id(client_id: str, base_id: str, extension_name: str, info: SourceInfo) -> str:
+    version = info.version or info.extension_compatibility_mode or "no_version"
+    return ":".join(
+        [
+            "extension",
+            safe_id_part(client_id or "client"),
+            safe_id_part(base_id or "base"),
+            safe_id_part(extension_name or "extension"),
+            safe_id_part(version),
+        ]
+    )
 
 
 def merge_indexes(indexes: list[dict]) -> dict:

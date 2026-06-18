@@ -79,9 +79,11 @@ The package format is compact v2:
 - `configuration_entities` stores objects, fields, forms, modules, methods, and queries in one table.
 - `configuration_search_chunks` stores RAG-ready text chunks without requiring embeddings during upload.
 - Client-memory `bases` remains the source of truth for `base_id`, `client_id`, configuration name, and configuration version.
+- Snapshot ids are stable: standard releases use `standard:<product>:<version>`, and project extensions use `extension:<client>:<base>:<extension>:<version>`. Re-indexing the same source is a replacement, not an ever-growing history.
+- `manifest.json` contains `snapshot_ids`; the upload side can purge old rows for those snapshots before importing fresh chunks.
 - Local paths such as `C:\Users\...` are stripped from package metadata before upload.
 - Full BSL/query text is not the database source of truth. Supabase stores path, line numbers, hashes, lengths and short previews; exact code stays in Git/src.
-- Standard configurations do not emit per-query RAG chunks. Small extensions may emit capped query previews, while large sources keep queries as compact entities only.
+- Standard configurations use a compact profile: no full method bodies, no query entities, no per-query RAG chunks, and only exported methods are stored as method entities. Extensions stay detailed because client changes are the main analysis surface.
 
 ## Upload Existing Package
 

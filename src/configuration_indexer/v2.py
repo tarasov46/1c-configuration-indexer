@@ -32,8 +32,17 @@ def to_v2_package(index: dict[str, Any]) -> dict[str, Any]:
     """Convert the verbose parser output to the compact production schema."""
 
     aliases_by_entity = group_aliases(index.get("configuration_aliases") or [])
+    standard_snapshot_ids = standard_snapshot_ids_for(index)
+    standard_source = is_standard_source(index) or bool(standard_snapshot_ids)
     include_text_previews = should_include_text_previews(index)
-    entities = build_entities(index, aliases_by_entity, include_text_previews=include_text_previews)
+    entities = build_entities(
+        index,
+        aliases_by_entity,
+        include_text_previews=include_text_previews,
+        standard_snapshot_ids=standard_snapshot_ids,
+    )
+    entity_ids = {row["id"] for row in entities if row.get("id")}
+    relations = build_relations(index, entity_ids, standard_snapshot_ids=standard_snapshot_ids)
     chunks = build_search_chunks(index, aliases_by_entity)
 
     result: dict[str, Any] = {
@@ -48,9 +57,12 @@ def to_v2_package(index: dict[str, Any]) -> dict[str, Any]:
         "configuration_layers": build_layers(index),
         "configuration_index_runs": sanitize_rows(index.get("configuration_index_runs") or []),
         "configuration_entities": entities,
-        "configuration_relations": sanitize_rows(index.get("configuration_relations") or []),
+        "configuration_relations": relations,
         "configuration_search_chunks": chunks,
     }
+    method_entities = sum(1 for row in entities if row.get("entity_type") == "method")
+    query_entities = sum(1 for row in entities if row.get("entity_type") == "query")
+    source_relations = len(index.get("configuration_relations") or [])
     result["summary"].update(
         {
             "entities": len(entities),
@@ -62,6 +74,12 @@ def to_v2_package(index: dict[str, Any]) -> dict[str, Any]:
                 - sum(1 for row in chunks if row.get("chunk_type") == "query_text"),
             ),
             "text_previews": include_text_previews,
+            "standard_compact_profile": standard_source,
+            "method_entities": method_entities,
+            "method_entities_omitted": max(0, len(index.get("configuration_methods") or []) - method_entities),
+            "query_entities": query_entities,
+            "query_entities_omitted": max(0, len(index.get("configuration_queries") or []) - query_entities),
+            "relations_omitted": max(0, source_relations - len(relations)),
             "schema_version": V2_SCHEMA_VERSION,
         }
     )
@@ -73,6 +91,7 @@ def build_entities(
     aliases_by_entity: dict[str, list[str]],
     *,
     include_text_previews: bool,
+    standard_snapshot_ids: set[str],
 ) -> list[dict[str, Any]]:
     entities: list[dict[str, Any]] = []
 
@@ -150,6 +169,8 @@ def build_entities(
         )
 
     for method in index.get("configuration_methods") or []:
+        if method.get("snapshot_id") in standard_snapshot_ids and not method.get("is_export"):
+            continue
         data = compact_data(method, ["is_function", "is_export", "signature", "start_line", "end_line", "metadata"])
         body_text = method.get("body_text")
         if body_text:
@@ -173,6 +194,8 @@ def build_entities(
         )
 
     for query in index.get("configuration_queries") or []:
+        if query.get("snapshot_id") in standard_snapshot_ids:
+            continue
         data = compact_data(query, ["query_kind", "path", "start_line", "end_line", "query_hash", "metadata"])
         query_text = query.get("query_text") or query.get("normalized_text")
         if query_text:
@@ -197,6 +220,19 @@ def build_entities(
         )
 
     return [row for row in entities if row.get("id")]
+
+
+def build_relations(index: dict[str, Any], entity_ids: set[str], *, standard_snapshot_ids: set[str]) -> list[dict[str, Any]]:
+    rows = sanitize_rows(index.get("configuration_relations") or [])
+    if not standard_snapshot_ids:
+        return rows
+    result = []
+    for row in rows:
+        source_id = row.get("source_id")
+        if row.get("snapshot_id") in standard_snapshot_ids and source_id and source_id not in entity_ids:
+            continue
+        result.append(row)
+    return result
 
 
 def entity_row(
@@ -292,14 +328,14 @@ def build_search_chunks(index: dict[str, Any], aliases_by_entity: dict[str, list
 
 
 def should_include_text_previews(index: dict[str, Any]) -> bool:
-    if source_kind(index) == "standard":
+    if is_standard_source(index):
         return False
     row_count = len(index.get("configuration_methods") or []) + len(index.get("configuration_queries") or [])
     return row_count <= MAX_TEXT_PREVIEW_ROWS
 
 
 def should_include_query_chunks(index: dict[str, Any]) -> bool:
-    if source_kind(index) == "standard":
+    if is_standard_source(index):
         return False
     return len(index.get("configuration_queries") or []) <= MAX_QUERY_CHUNKS
 
@@ -308,6 +344,27 @@ def source_kind(index: dict[str, Any]) -> str:
     summary = index.get("summary") or {}
     info = index.get("source_info") or {}
     return str(summary.get("source_kind") or info.get("source_kind") or "").strip().lower()
+
+
+def is_standard_source(index: dict[str, Any]) -> bool:
+    return source_kind(index) in {"standard", "configuration"}
+
+
+def standard_snapshot_ids_for(index: dict[str, Any]) -> set[str]:
+    result: set[str] = set()
+    for row in index.get("configuration_snapshots") or []:
+        scope = str(row.get("scope") or "").strip().lower()
+        kind = str(row.get("source_kind") or "").strip().lower()
+        if scope == "standard" or kind in {"standard", "configuration"}:
+            snapshot_id = row.get("id")
+            if snapshot_id:
+                result.add(snapshot_id)
+    if is_standard_source(index):
+        summary = index.get("summary") or {}
+        snapshot_id = summary.get("snapshot_id")
+        if snapshot_id:
+            result.add(snapshot_id)
+    return result
 
 
 def build_query_chunk_content(query: dict[str, Any], query_text: str) -> str:

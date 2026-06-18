@@ -51,6 +51,12 @@ def make_snapshot_id(info: SourceInfo, mode: str, product_code: str = "", releas
     kind = mode if mode != "auto" else info.source_kind
     if kind in {"configuration", "standard"} and product_code and release_version:
         return f"standard:{safe_id_part(product_code)}:{safe_id_part(release_version)}"
+    if kind == "extension":
+        owner = safe_id_part(product_code or info.product_code or "unknown")
+        release = safe_id_part(release_version or info.release_version or "unknown")
+        name = safe_id_part(info.name or "extension")
+        version = safe_id_part(info.version or info.extension_compatibility_mode or "no_version")
+        return f"extension:{owner}:{release}:{name}:{version}"
     name = safe_id_part(info.name or "configuration")
     version = safe_id_part(info.version or info.extension_compatibility_mode or "no_version")
     return f"{kind}:{name}:{version}:{timestamp}"
