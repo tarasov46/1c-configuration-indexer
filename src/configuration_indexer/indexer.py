@@ -159,7 +159,7 @@ def parse_configuration(options: IndexOptions) -> dict:
                 "vendor": release_vendor,
                 "compatibility_mode": release_compatibility_mode,
                 "extension_compatibility_mode": "" if info.base_source_path else info.extension_compatibility_mode,
-                "standard_snapshot_id": snapshot_id if release_is_standard_index else None,
+                "standard_snapshot_id": None,
                 "index_status": "completed" if release_is_standard_index else "pending",
                 "metadata": {
                     "source_kind": effective_mode,
