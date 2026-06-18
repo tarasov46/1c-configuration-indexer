@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 import os
 from dataclasses import dataclass, field
@@ -20,6 +21,7 @@ class PackageUploadOptions:
     auth_scheme: str = "Bearer"
     timeout_seconds: float = 300
     send_complete: bool = True
+    transport: str = "binary"
 
 
 @dataclass
@@ -72,22 +74,25 @@ def upload_package(options: PackageUploadOptions) -> PackageUploadResult:
         chunks = manifest.get("chunks") or []
         for position, chunk in enumerate(chunks, start=1):
             chunk_path = package_dir / chunk["file"]
-            response = post_bytes(
-                options,
-                data=chunk_path.read_bytes(),
-                headers={
-                    "Content-Type": chunk.get("content_type") or "application/jsonl",
-                    "Content-Encoding": chunk.get("content_encoding") or "gzip",
-                    "X-Configuration-Upload-Part": "chunk",
-                    "X-Configuration-Job-Id": str(manifest.get("job_id") or ""),
-                    "X-Configuration-Chunk-Number": str(position),
-                    "X-Configuration-Chunk-Count": str(len(chunks)),
-                    "X-Configuration-Chunk-Table": str(chunk.get("table") or ""),
-                    "X-Configuration-Chunk-File": str(chunk.get("file") or ""),
-                    "X-Configuration-Chunk-Sha256": str(chunk.get("sha256") or ""),
-                    "X-Configuration-Chunk-Rows": str(chunk.get("rows") or 0),
-                },
-            )
+            if normalized_transport(options.transport) == "staged-json":
+                response = post_staged_json_chunk(options, manifest, chunk, chunk_path, position, len(chunks))
+            else:
+                response = post_bytes(
+                    options,
+                    data=chunk_path.read_bytes(),
+                    headers={
+                        "Content-Type": chunk.get("content_type") or "application/jsonl",
+                        "Content-Encoding": chunk.get("content_encoding") or "gzip",
+                        "X-Configuration-Upload-Part": "chunk",
+                        "X-Configuration-Job-Id": str(manifest.get("job_id") or ""),
+                        "X-Configuration-Chunk-Number": str(position),
+                        "X-Configuration-Chunk-Count": str(len(chunks)),
+                        "X-Configuration-Chunk-Table": str(chunk.get("table") or ""),
+                        "X-Configuration-Chunk-File": str(chunk.get("file") or ""),
+                        "X-Configuration-Chunk-Sha256": str(chunk.get("sha256") or ""),
+                        "X-Configuration-Chunk-Rows": str(chunk.get("rows") or 0),
+                    },
+                )
             result.responses.append(response)
             if response["ok"]:
                 result.uploaded_chunks += 1
@@ -128,6 +133,61 @@ def upload_package(options: PackageUploadOptions) -> PackageUploadResult:
     except Exception as exc:
         result.error = str(exc)
         return result
+
+
+def normalized_transport(value: str) -> str:
+    transport = (value or "binary").strip().lower().replace("_", "-")
+    if transport in {"staged-json", "json", "json-staging", "n8n-json"}:
+        return "staged-json"
+    return "binary"
+
+
+def post_staged_json_chunk(
+    options: PackageUploadOptions,
+    manifest: dict[str, Any],
+    chunk: dict[str, Any],
+    chunk_path: Path,
+    position: int,
+    chunk_count: int,
+) -> dict[str, Any]:
+    rows = read_gzip_jsonl(chunk_path)
+    payload = {
+        "job_id": manifest.get("job_id"),
+        "file_path": chunk.get("file"),
+        "table_name": chunk.get("table"),
+        "chunk_number": position,
+        "chunk_count": chunk_count,
+        "sha256": chunk.get("sha256"),
+        "compressed_bytes": chunk.get("bytes"),
+        "raw_bytes": chunk.get("raw_bytes"),
+        "rows_count": chunk.get("rows"),
+        "rows": rows,
+    }
+    return post_bytes(
+        options,
+        data=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "X-Configuration-Upload-Part": "chunk-json",
+            "X-Configuration-Job-Id": str(manifest.get("job_id") or ""),
+            "X-Configuration-Chunk-Number": str(position),
+            "X-Configuration-Chunk-Count": str(chunk_count),
+            "X-Configuration-Chunk-Table": str(chunk.get("table") or ""),
+            "X-Configuration-Chunk-File": str(chunk.get("file") or ""),
+            "X-Configuration-Chunk-Sha256": str(chunk.get("sha256") or ""),
+            "X-Configuration-Chunk-Rows": str(chunk.get("rows") or 0),
+        },
+    )
+
+
+def read_gzip_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with gzip.open(path, "rt", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
 
 
 def post_bytes(options: PackageUploadOptions, data: bytes, headers: dict[str, str]) -> dict[str, Any]:

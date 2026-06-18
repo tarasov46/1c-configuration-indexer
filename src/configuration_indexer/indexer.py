@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -126,7 +127,7 @@ def parse_configuration(options: IndexOptions) -> dict:
         relations.extend(obj_relations)
 
     relations.extend(extract_field_type_relations(fields, snapshot_id))
-    files = build_files(src_root, snapshot_id)
+    files = build_files(src_root, snapshot_id, objects, forms, templates, modules)
     cards = build_cards(snapshot_id, objects, fields, forms, templates, modules, methods, queries, info, effective_mode)
 
     return {
@@ -588,9 +589,32 @@ def extract_field_type_relations(fields: list[dict], snapshot_id: str):
     return relations
 
 
-def build_files(src_root: Path, snapshot_id: str) -> list[dict]:
+def build_files(src_root: Path, snapshot_id: str, objects, forms, templates, modules) -> list[dict]:
     files = []
-    for path in sorted(p for p in src_root.rglob("*") if p.is_file()):
+    paths: set[str] = set()
+    for obj in objects:
+        for key in ("xml_path", "help_path"):
+            value = obj.get(key)
+            if value:
+                paths.add(value)
+    for form in forms:
+        for key in ("xml_path", "module_path"):
+            value = form.get(key)
+            if value:
+                paths.add(value)
+    for template in templates:
+        value = template.get("path")
+        if value:
+            paths.add(value)
+    for module in modules:
+        value = module.get("path")
+        if value:
+            paths.add(value)
+
+    for rel_path in sorted(paths):
+        path = src_root / rel_path
+        if not path.is_file():
+            continue
         rel = safe_rel(path, src_root)
         files.append(
             {
@@ -611,13 +635,20 @@ def build_files(src_root: Path, snapshot_id: str) -> list[dict]:
 
 def build_cards(snapshot_id: str, objects, fields, forms, templates, modules, methods, queries, info: SourceInfo, source_kind: str):
     cards = []
+    fields_by_object = group_by_object(fields)
+    forms_by_object = group_by_object(forms)
+    templates_by_object = group_by_object(templates)
+    modules_by_object = group_by_object(modules)
+    methods_by_object = group_by_object(methods)
+    queries_by_object = group_by_object(queries)
+
     for obj in objects:
-        obj_fields = [f for f in fields if f["object_id"] == obj["id"]]
-        obj_forms = [f for f in forms if f["object_id"] == obj["id"]]
-        obj_templates = [t for t in templates if t["object_id"] == obj["id"]]
-        obj_modules = [m for m in modules if m["object_id"] == obj["id"]]
-        obj_methods = [m for m in methods if m["object_id"] == obj["id"]]
-        obj_queries = [q for q in queries if q["object_id"] == obj["id"]]
+        obj_fields = fields_by_object.get(obj["id"], [])
+        obj_forms = forms_by_object.get(obj["id"], [])
+        obj_templates = templates_by_object.get(obj["id"], [])
+        obj_modules = modules_by_object.get(obj["id"], [])
+        obj_methods = methods_by_object.get(obj["id"], [])
+        obj_queries = queries_by_object.get(obj["id"], [])
         attrs = [f for f in obj_fields if f["field_kind"] == "attribute"]
         tabs = [f for f in obj_fields if f["field_kind"] == "tabular_section"]
         exported = [m for m in obj_methods if m["is_export"]]
@@ -658,6 +689,15 @@ def build_cards(snapshot_id: str, objects, fields, forms, templates, modules, me
             }
         )
     return cards
+
+
+def group_by_object(rows) -> dict[str, list[dict]]:
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for row in rows:
+        object_identifier = row.get("object_id")
+        if object_identifier:
+            grouped[object_identifier].append(row)
+    return grouped
 
 
 def write_outputs(index: dict, out_json: Path, out_summary: Path | None = None) -> None:

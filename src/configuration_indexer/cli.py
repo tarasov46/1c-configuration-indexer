@@ -75,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
     upload_package_parser.add_argument("--auth-scheme", default="Bearer")
     upload_package_parser.add_argument("--timeout-seconds", type=float, default=300)
     upload_package_parser.add_argument("--no-complete", action="store_true")
+    upload_package_parser.add_argument("--transport", default="binary", choices=["binary", "staged-json"])
 
     args = parser.parse_args(argv)
     if args.command == "detect":
@@ -168,6 +169,7 @@ def main(argv: list[str] | None = None) -> int:
                 auth_scheme=args.auth_scheme,
                 timeout_seconds=args.timeout_seconds,
                 send_complete=not args.no_complete,
+                transport=args.transport,
             )
         )
         print(json.dumps(upload_result.to_dict(), ensure_ascii=False, indent=2))
@@ -262,6 +264,7 @@ def run_job(job_path: Path, out_dir_override: Path | None = None, no_upload: boo
                 auth_scheme=upload.get("auth_scheme") or "Bearer",
                 timeout_seconds=float(upload.get("timeout_seconds") or 300),
                 send_complete=upload.get("send_complete", True) is not False,
+                transport=upload.get("transport") or "binary",
             )
         )
         result["upload"] = upload_result.to_dict()
