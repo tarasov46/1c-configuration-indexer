@@ -227,6 +227,7 @@ def run_job(job_path: Path, out_dir_override: Path | None = None, no_upload: boo
                 mode=input_config.get("mode") or "auto",
                 product_code=input_config.get("product_code") or "",
                 release_version=input_config.get("release_version") or "",
+                snapshot_id=input_config.get("snapshot_id") or "",
                 include_code_text=include_code_text,
             )
         )

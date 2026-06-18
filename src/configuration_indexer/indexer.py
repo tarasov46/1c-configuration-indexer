@@ -46,10 +46,12 @@ class IndexOptions:
     include_code_text: bool = True
 
 
-def make_snapshot_id(info: SourceInfo, mode: str) -> str:
+def make_snapshot_id(info: SourceInfo, mode: str, product_code: str = "", release_version: str = "") -> str:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    name = safe_id_part(info.name or "configuration")
     kind = mode if mode != "auto" else info.source_kind
+    if kind in {"configuration", "standard"} and product_code and release_version:
+        return f"standard:{safe_id_part(product_code)}:{safe_id_part(release_version)}"
+    name = safe_id_part(info.name or "configuration")
     version = safe_id_part(info.version or info.extension_compatibility_mode or "no_version")
     return f"{kind}:{name}:{version}:{timestamp}"
 
@@ -69,9 +71,9 @@ def parse_configuration(options: IndexOptions) -> dict:
         raise ValueError(info.error)
 
     effective_mode = info.source_kind if options.mode == "auto" else options.mode
-    snapshot_id = options.snapshot_id or make_snapshot_id(info, effective_mode)
     product_code = options.product_code or info.product_code or "unknown"
     release_version = options.release_version or info.release_version or "unknown"
+    snapshot_id = options.snapshot_id or make_snapshot_id(info, effective_mode, product_code, release_version)
     release_internal_name = info.base_name or info.name
     release_synonym = info.base_synonym or info.synonym
     release_vendor = info.base_vendor or info.vendor
