@@ -7,6 +7,13 @@ from typing import Any
 
 V2_SCHEMA_VERSION = "configuration-mcp/v2"
 
+METHOD_BODY_PREVIEW_CHARS = 240
+QUERY_ENTITY_PREVIEW_CHARS = 360
+QUERY_CHUNK_PREVIEW_CHARS = 600
+CARD_CHUNK_MAX_CHARS = 1600
+MAX_QUERY_CHUNKS = 1000
+MAX_TEXT_PREVIEW_ROWS = 5000
+
 V2_PACKAGED_TABLES = [
     "configuration_products",
     "configuration_product_releases",
@@ -25,13 +32,15 @@ def to_v2_package(index: dict[str, Any]) -> dict[str, Any]:
     """Convert the verbose parser output to the compact production schema."""
 
     aliases_by_entity = group_aliases(index.get("configuration_aliases") or [])
-    entities = build_entities(index, aliases_by_entity)
+    include_text_previews = should_include_text_previews(index)
+    entities = build_entities(index, aliases_by_entity, include_text_previews=include_text_previews)
     chunks = build_search_chunks(index, aliases_by_entity)
 
     result: dict[str, Any] = {
         "schema_version": V2_SCHEMA_VERSION,
         "indexer_version": index.get("indexer_version", ""),
         "source_info": sanitize_source_info(index.get("source_info") or {}),
+        "project_info": sanitize_json(index.get("project_info") or {}),
         "summary": sanitize_summary(index.get("summary") or {}),
         "configuration_products": sanitize_rows(index.get("configuration_products") or []),
         "configuration_product_releases": sanitize_rows(index.get("configuration_product_releases") or []),
@@ -46,13 +55,25 @@ def to_v2_package(index: dict[str, Any]) -> dict[str, Any]:
         {
             "entities": len(entities),
             "search_chunks": len(chunks),
+            "query_search_chunks": sum(1 for row in chunks if row.get("chunk_type") == "query_text"),
+            "query_search_chunks_omitted": max(
+                0,
+                len(index.get("configuration_queries") or [])
+                - sum(1 for row in chunks if row.get("chunk_type") == "query_text"),
+            ),
+            "text_previews": include_text_previews,
             "schema_version": V2_SCHEMA_VERSION,
         }
     )
     return result
 
 
-def build_entities(index: dict[str, Any], aliases_by_entity: dict[str, list[str]]) -> list[dict[str, Any]]:
+def build_entities(
+    index: dict[str, Any],
+    aliases_by_entity: dict[str, list[str]],
+    *,
+    include_text_previews: bool,
+) -> list[dict[str, Any]]:
     entities: list[dict[str, Any]] = []
 
     for obj in index.get("configuration_objects") or []:
@@ -132,8 +153,10 @@ def build_entities(index: dict[str, Any], aliases_by_entity: dict[str, list[str]
         data = compact_data(method, ["is_function", "is_export", "signature", "start_line", "end_line", "metadata"])
         body_text = method.get("body_text")
         if body_text:
-            data["body_preview"] = first_chars(body_text, 1200)
-            data["body_omitted"] = len(body_text) > 1200
+            data["body_length"] = len(body_text)
+            if include_text_previews:
+                data["body_preview"] = first_chars(body_text, METHOD_BODY_PREVIEW_CHARS)
+                data["body_omitted"] = len(body_text) > METHOD_BODY_PREVIEW_CHARS
         entities.append(
             entity_row(
                 row=method,
@@ -153,8 +176,10 @@ def build_entities(index: dict[str, Any], aliases_by_entity: dict[str, list[str]
         data = compact_data(query, ["query_kind", "path", "start_line", "end_line", "query_hash", "metadata"])
         query_text = query.get("query_text") or query.get("normalized_text")
         if query_text:
-            data["query_preview"] = first_chars(query_text, 2000)
-            data["query_omitted"] = len(query_text) > 2000
+            data["query_length"] = len(query_text)
+            if include_text_previews:
+                data["query_preview"] = first_chars(query_text, QUERY_ENTITY_PREVIEW_CHARS)
+                data["query_omitted"] = len(query_text) > QUERY_ENTITY_PREVIEW_CHARS
         entities.append(
             entity_row(
                 row=query,
@@ -231,22 +256,21 @@ def build_search_chunks(index: dict[str, Any], aliases_by_entity: dict[str, list
                 entity_id=card.get("object_id") or card.get("method_id") or card.get("query_id"),
                 chunk_type=card.get("card_type") or "summary",
                 title=card.get("title") or "",
-                content=text,
+                content=first_chars(text, CARD_CHUNK_MAX_CHARS),
                 metadata=metadata,
             )
         )
 
-    for query in index.get("configuration_queries") or []:
-        query_text = query.get("query_text") or ""
+    if should_include_query_chunks(index):
+        queries_for_chunks = index.get("configuration_queries") or []
+    else:
+        queries_for_chunks = []
+
+    for query in queries_for_chunks:
+        query_text = query.get("normalized_text") or query.get("query_text") or ""
         if not query_text:
             continue
-        content = "\n".join(
-            [
-                f"Query: {query.get('full_name') or query.get('name') or ''}",
-                f"Path: {normalize_relative_path(query.get('path') or '')}",
-                first_chars(query_text, 6000),
-            ]
-        )
+        content = build_query_chunk_content(query, query_text)
         chunks.append(
             search_chunk_row(
                 chunk_id=f"{query.get('id')}:chunk:query",
@@ -255,11 +279,58 @@ def build_search_chunks(index: dict[str, Any], aliases_by_entity: dict[str, list
                 chunk_type="query_text",
                 title=query.get("full_name") or query.get("name") or "Query",
                 content=content,
-                metadata=compact_data(query, ["query_kind", "path", "start_line", "end_line", "query_hash"]),
+                metadata={
+                    **compact_data(query, ["query_kind", "path", "start_line", "end_line", "query_hash"]),
+                    "query_length": len(query_text),
+                    "query_preview_chars": QUERY_CHUNK_PREVIEW_CHARS,
+                    "full_text_source": "git_or_local_src",
+                },
             )
         )
 
     return [row for row in chunks if row.get("id") and row.get("content")]
+
+
+def should_include_text_previews(index: dict[str, Any]) -> bool:
+    if source_kind(index) == "standard":
+        return False
+    row_count = len(index.get("configuration_methods") or []) + len(index.get("configuration_queries") or [])
+    return row_count <= MAX_TEXT_PREVIEW_ROWS
+
+
+def should_include_query_chunks(index: dict[str, Any]) -> bool:
+    if source_kind(index) == "standard":
+        return False
+    return len(index.get("configuration_queries") or []) <= MAX_QUERY_CHUNKS
+
+
+def source_kind(index: dict[str, Any]) -> str:
+    summary = index.get("summary") or {}
+    info = index.get("source_info") or {}
+    return str(summary.get("source_kind") or info.get("source_kind") or "").strip().lower()
+
+
+def build_query_chunk_content(query: dict[str, Any], query_text: str) -> str:
+    preview = first_chars(query_text, QUERY_CHUNK_PREVIEW_CHARS)
+    omitted = len(query_text) > QUERY_CHUNK_PREVIEW_CHARS
+    path = normalize_relative_path(query.get("path") or "")
+    lines = [
+        f"Query: {query.get('full_name') or query.get('name') or ''}",
+        f"Path: {path}",
+    ]
+    if query.get("start_line") or query.get("end_line"):
+        lines.append(f"Lines: {query.get('start_line') or ''}-{query.get('end_line') or ''}")
+    if query.get("query_hash"):
+        lines.append(f"Hash: {query.get('query_hash')}")
+    lines.extend(
+        [
+            f"Preview chars: {min(len(query_text), QUERY_CHUNK_PREVIEW_CHARS)} of {len(query_text)}",
+            f"Full text omitted: {str(omitted).lower()}",
+            "Text preview:",
+            preview,
+        ]
+    )
+    return "\n".join(lines)
 
 
 def search_chunk_row(
@@ -381,7 +452,7 @@ def sanitize_json(value: Any) -> Any:
     if isinstance(value, dict):
         result = {}
         for key, child in value.items():
-            if key in {"root", "base_source_path", "project_root", "manifest_path", "source_path"}:
+            if key in {"root", "base_source_path", "base_src", "project_root", "manifest_path", "source_path", "path"}:
                 sanitized = sanitize_source_path(child)
                 if sanitized:
                     result[key] = sanitized
@@ -391,8 +462,6 @@ def sanitize_json(value: Any) -> Any:
     if isinstance(value, list):
         return [sanitize_json(item) for item in value]
     if isinstance(value, str):
-        if LOCAL_PATH_RE.search(value.strip()):
-            return ""
         return value
     return value
 

@@ -80,6 +80,8 @@ The package format is compact v2:
 - `configuration_search_chunks` stores RAG-ready text chunks without requiring embeddings during upload.
 - Client-memory `bases` remains the source of truth for `base_id`, `client_id`, configuration name, and configuration version.
 - Local paths such as `C:\Users\...` are stripped from package metadata before upload.
+- Full BSL/query text is not the database source of truth. Supabase stores path, line numbers, hashes, lengths and short previews; exact code stays in Git/src.
+- Standard configurations do not emit per-query RAG chunks. Small extensions may emit capped query previews, while large sources keep queries as compact entities only.
 
 ## Upload Existing Package
 
