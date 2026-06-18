@@ -1,0 +1,30 @@
+{
+  "schema_version": "configuration-mcp/indexing-job/1",
+  "job_id": "idx_example_001",
+  "input": {
+    "source_path": "C:\\path\\to\\project-or-extension",
+    "base_mode": "detect",
+    "standard_snapshot_id": "",
+    "include_code_text": false,
+    "max_chunk_bytes": 4194304
+  },
+  "profile": {
+    "client_id": "client-code",
+    "base_id": "prod",
+    "base_profile_id": "client-code:prod",
+    "profile_name": "Client production"
+  },
+  "output": {
+    "out_dir": ".\\out",
+    "package_name": "idx_example_001"
+  },
+  "upload": {
+    "enabled": true,
+    "upload_url": "https://example.com/configuration-index-upload",
+    "token_env": "CONFIGURATION_INDEXER_UPLOAD_TOKEN",
+    "auth_header": "Authorization",
+    "auth_scheme": "Bearer",
+    "timeout_seconds": 300,
+    "send_complete": true
+  }
+}

@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+.venv-build/
+build/
+dist/
+*.spec
+*.egg-info/
+
+# Local indexer outputs
+out/
+outputs/
+payloads/
+work/
+tmp/
+*.jsonl
+*.ndjson
+.configuration-indexer.local.json
+configuration-indexer.local.json
+/indexing-job*.json
+/job*.json
+
+# 1C exports and databases
+local-src/
+src-export/
+exports/
+*.cf
+*.cfe
+*.dt
+*.epf
+*.erf
+
+# Secrets
+.env
+.env.*
+
+# IDE
+.idea/
+.vscode/
