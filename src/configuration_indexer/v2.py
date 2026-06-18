@@ -421,8 +421,9 @@ def build_layers(index: dict[str, Any]) -> list[dict[str, Any]]:
 
     result: list[dict[str, Any]] = []
     standard_snapshot_id = project_info.get("standard_snapshot_id") or ""
+    packaged_snapshot_ids = {row.get("id") for row in index.get("configuration_snapshots") or [] if row.get("id")}
     release_id = project_info.get("release_id") or None
-    if standard_snapshot_id:
+    if standard_snapshot_id and standard_snapshot_id in packaged_snapshot_ids:
         result.append(
             {
                 "id": f"{base_id}:layer:0000:standard",

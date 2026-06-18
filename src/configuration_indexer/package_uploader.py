@@ -203,10 +203,12 @@ def post_bytes(options: PackageUploadOptions, data: bytes, headers: dict[str, st
     try:
         with request.urlopen(req, timeout=options.timeout_seconds) as response:
             response_text = response.read(4096).decode("utf-8", errors="replace")
+            response_json = parse_response_json(response_text)
             return {
-                "ok": 200 <= response.status < 300,
+                "ok": 200 <= response.status < 300 and response_json.get("ok", True) is not False,
                 "status_code": response.status,
                 "response_text": response_text,
+                "response_json": response_json or None,
             }
     except error.HTTPError as exc:
         response_text = exc.read(4096).decode("utf-8", errors="replace")
@@ -214,6 +216,7 @@ def post_bytes(options: PackageUploadOptions, data: bytes, headers: dict[str, st
             "ok": False,
             "status_code": exc.code,
             "response_text": response_text,
+            "response_json": parse_response_json(response_text) or None,
             "error": str(exc),
         }
 
@@ -224,3 +227,11 @@ def resolve_token(options: PackageUploadOptions) -> str:
     if options.token_env:
         return os.getenv(options.token_env, "")
     return ""
+
+
+def parse_response_json(response_text: str) -> dict[str, Any]:
+    try:
+        value = json.loads(response_text)
+    except (TypeError, ValueError):
+        return {}
+    return value if isinstance(value, dict) else {}
