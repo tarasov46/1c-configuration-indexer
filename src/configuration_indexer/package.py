@@ -8,30 +8,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .v2 import V2_PACKAGED_TABLES, to_v2_package
+
 PACKAGE_SCHEMA_VERSION = "configuration-mcp/index-package/1"
 DEFAULT_MAX_CHUNK_BYTES = 4 * 1024 * 1024
 
-PACKAGED_TABLES = [
-    "configuration_products",
-    "configuration_product_releases",
-    "configuration_snapshots",
-    "configuration_index_runs",
-    "configuration_files",
-    "configuration_objects",
-    "configuration_aliases",
-    "configuration_object_fields",
-    "configuration_forms",
-    "configuration_templates",
-    "configuration_modules",
-    "configuration_methods",
-    "configuration_queries",
-    "configuration_relations",
-    "configuration_cards",
-    "configuration_base_profiles",
-    "configuration_client_customizations",
-    "configuration_snapshot_layers",
-    "configuration_client_customization_impacts",
-]
+PACKAGED_TABLES = V2_PACKAGED_TABLES
 
 
 @dataclass
@@ -42,6 +24,7 @@ class PackageOptions:
 
 
 def write_index_package(index: dict[str, Any], options: PackageOptions) -> dict[str, Any]:
+    index = to_v2_package(index)
     package_dir = Path(options.package_dir)
     chunks_dir = package_dir / "chunks"
     chunks_dir.mkdir(parents=True, exist_ok=True)

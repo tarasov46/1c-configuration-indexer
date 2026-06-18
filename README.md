@@ -69,11 +69,17 @@ out/
   index-package-.../
     manifest.json
     chunks/
-      configuration_objects.000001.jsonl.gz
-      configuration_methods.000001.jsonl.gz
-      configuration_queries.000001.jsonl.gz
-      configuration_cards.000001.jsonl.gz
+      configuration_entities.000001.jsonl.gz
+      configuration_relations.000001.jsonl.gz
+      configuration_search_chunks.000001.jsonl.gz
 ```
+
+The package format is compact v2:
+
+- `configuration_entities` stores objects, fields, forms, modules, methods, and queries in one table.
+- `configuration_search_chunks` stores RAG-ready text chunks without requiring embeddings during upload.
+- `configuration_base_bindings` links an existing client-memory/base `base_id` to a 1C product release.
+- Local paths such as `C:\Users\...` are stripped from package metadata before upload.
 
 ## Upload Existing Package
 
