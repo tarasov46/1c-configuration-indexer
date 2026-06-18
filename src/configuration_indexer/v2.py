@@ -11,7 +11,6 @@ V2_PACKAGED_TABLES = [
     "configuration_products",
     "configuration_product_releases",
     "configuration_snapshots",
-    "configuration_base_bindings",
     "configuration_layers",
     "configuration_index_runs",
     "configuration_entities",
@@ -37,7 +36,6 @@ def to_v2_package(index: dict[str, Any]) -> dict[str, Any]:
         "configuration_products": sanitize_rows(index.get("configuration_products") or []),
         "configuration_product_releases": sanitize_rows(index.get("configuration_product_releases") or []),
         "configuration_snapshots": sanitize_rows(index.get("configuration_snapshots") or []),
-        "configuration_base_bindings": build_base_bindings(index),
         "configuration_layers": build_layers(index),
         "configuration_index_runs": sanitize_rows(index.get("configuration_index_runs") or []),
         "configuration_entities": entities,
@@ -285,36 +283,6 @@ def search_chunk_row(
         "embedding": None,
         "metadata": sanitize_json(metadata),
     }
-
-
-def build_base_bindings(index: dict[str, Any]) -> list[dict[str, Any]]:
-    project_info = index.get("project_info") or {}
-    summary = index.get("summary") or {}
-    client_id = project_info.get("client_id") or ""
-    base_id = project_info.get("base_id") or ""
-    if not base_id:
-        return []
-    product_id = project_info.get("product_code") or summary.get("product_code") or ""
-    release_version = project_info.get("release_version") or summary.get("release_version") or ""
-    release_id = project_info.get("release_id") or (f"{product_id}:{release_version}" if product_id and release_version else "")
-    return [
-        {
-            "id": base_id,
-            "base_id": base_id,
-            "client_id": client_id,
-            "product_id": product_id,
-            "release_id": release_id or None,
-            "standard_snapshot_id": project_info.get("standard_snapshot_id") or summary.get("standard_snapshot_id") or None,
-            "status": "active",
-            "metadata": sanitize_json(
-                {
-                    "profile_name": project_info.get("profile_name") or "",
-                    "layout": "src+extensions",
-                    "warnings": project_info.get("warnings") or [],
-                }
-            ),
-        }
-    ]
 
 
 def build_layers(index: dict[str, Any]) -> list[dict[str, Any]]:

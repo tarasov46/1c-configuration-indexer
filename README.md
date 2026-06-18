@@ -78,7 +78,7 @@ The package format is compact v2:
 
 - `configuration_entities` stores objects, fields, forms, modules, methods, and queries in one table.
 - `configuration_search_chunks` stores RAG-ready text chunks without requiring embeddings during upload.
-- `configuration_base_bindings` links an existing client-memory/base `base_id` to a 1C product release.
+- Client-memory `bases` remains the source of truth for `base_id`, `client_id`, configuration name, and configuration version.
 - Local paths such as `C:\Users\...` are stripped from package metadata before upload.
 
 ## Upload Existing Package
