@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import __version__
-from .bsl import extract_queries, extract_relations, normalize_query, parse_bsl_methods
+from .bsl import extract_call_relations, extract_queries, extract_relations, normalize_query, parse_bsl_methods
 from .detector import SourceInfo, detect_source, source_info_to_dict
 from .xml_utils import (
     child,
@@ -136,7 +136,7 @@ def parse_configuration(options: IndexOptions) -> dict:
 
     relations.extend(extract_field_type_relations(fields, snapshot_id))
     files = build_files(src_root, snapshot_id, objects, forms, templates, modules)
-    cards = build_cards(snapshot_id, objects, fields, forms, templates, modules, methods, queries, info, effective_mode)
+    cards = build_cards(snapshot_id, objects, fields, forms, templates, modules, methods, relations, info, effective_mode)
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -500,9 +500,17 @@ def parse_modules_for_object(src_root: Path, obj: dict, snapshot_id: str, includ
                 "metadata": {"lines": len(text.splitlines())},
             }
         )
-        for method in parse_bsl_methods(text):
+        parsed_methods = parse_bsl_methods(text)
+        module_method_refs = {}
+        for method in parsed_methods:
             met_id = f"{mid}:method:{method['name']}:{method['start_line']}"
             method_full = f"{obj['full_name']}.{module_name}.{method['name']}"
+            module_method_refs[method["name"]] = {"id": met_id, "full_name": method_full}
+
+        for method in parsed_methods:
+            met_id = f"{mid}:method:{method['name']}:{method['start_line']}"
+            method_full = f"{obj['full_name']}.{module_name}.{method['name']}"
+            ignored_targets = {param["name"] for param in method["parameters"] if param.get("name")}
             methods.append(
                 {
                     "id": met_id,
@@ -545,6 +553,18 @@ def parse_modules_for_object(src_root: Path, obj: dict, snapshot_id: str, includ
                     }
                 )
             relations.extend(extract_relations(met_id, method_full, method["body_text"], rel, method["start_line"], snapshot_id))
+            relations.extend(
+                extract_call_relations(
+                    met_id,
+                    method_full,
+                    method["body_text"],
+                    rel,
+                    method["start_line"],
+                    snapshot_id,
+                    module_method_refs,
+                    ignored_external_targets=ignored_targets,
+                )
+            )
     return modules, methods, queries, relations
 
 
@@ -641,14 +661,14 @@ def build_files(src_root: Path, snapshot_id: str, objects, forms, templates, mod
     return files
 
 
-def build_cards(snapshot_id: str, objects, fields, forms, templates, modules, methods, queries, info: SourceInfo, source_kind: str):
+def build_cards(snapshot_id: str, objects, fields, forms, templates, modules, methods, relations, info: SourceInfo, source_kind: str):
     cards = []
     fields_by_object = group_by_object(fields)
     forms_by_object = group_by_object(forms)
     templates_by_object = group_by_object(templates)
     modules_by_object = group_by_object(modules)
     methods_by_object = group_by_object(methods)
-    queries_by_object = group_by_object(queries)
+    relations_by_object = group_relations_by_object(relations, methods, fields)
 
     for obj in objects:
         obj_fields = fields_by_object.get(obj["id"], [])
@@ -656,28 +676,28 @@ def build_cards(snapshot_id: str, objects, fields, forms, templates, modules, me
         obj_templates = templates_by_object.get(obj["id"], [])
         obj_modules = modules_by_object.get(obj["id"], [])
         obj_methods = methods_by_object.get(obj["id"], [])
-        obj_queries = queries_by_object.get(obj["id"], [])
+        obj_relations = relations_by_object.get(obj["id"], [])
         attrs = [f for f in obj_fields if f["field_kind"] == "attribute"]
         tabs = [f for f in obj_fields if f["field_kind"] == "tabular_section"]
         exported = [m for m in obj_methods if m["is_export"]]
-        text = "\n".join(
-            [
-                f"Источник: {source_kind}",
-                f"Конфигурация: {info.synonym or info.name}",
-                f"Объект: {obj['full_name']}",
-                f"Синоним: {obj.get('synonym') or ''}",
-                f"Комментарий: {obj.get('comment') or ''}",
-                f"Принадлежность расширения: {obj['metadata'].get('extension_object_kind') or ''}",
-                "",
-                "Реквизиты: " + ", ".join(f"{f['name']} ({f.get('value_type') or 'тип не извлечён'})" for f in attrs[:30]),
-                "Табличные части: " + ", ".join(f["name"] for f in tabs),
-                "Формы: " + ", ".join(f["name"] for f in obj_forms),
-                "Макеты: " + ", ".join(t["name"] for t in obj_templates),
-                "Модули: " + ", ".join(f"{m['module_kind']}:{m['name']}" for m in obj_modules),
-                "Экспортные методы: " + ", ".join(m["name"] for m in exported[:30]),
-                f"Найдено методов: {len(obj_methods)}",
-                f"Найдено запросов: {len(obj_queries)}",
-            ]
+        external_calls = unique_relation_targets(obj_relations, "external_call", limit=12)
+        local_calls = unique_local_call_names(obj_relations, obj_methods, limit=12)
+        entry_points = [method_entry(method) for method in sorted_methods(exported)[:12]]
+        files = object_files(obj, obj_modules, obj_templates, obj_forms)
+        text = render_object_card(
+            obj=obj,
+            info=info,
+            source_kind=source_kind,
+            attrs=attrs,
+            tabs=tabs,
+            forms=obj_forms,
+            templates=obj_templates,
+            modules=obj_modules,
+            methods=obj_methods,
+            exported=exported,
+            external_calls=external_calls,
+            local_calls=local_calls,
+            files=files,
         )
         cards.append(
             {
@@ -692,11 +712,259 @@ def build_cards(snapshot_id: str, objects, fields, forms, templates, modules, me
                 "text": text,
                 "source": "indexer",
                 "status": "draft",
-                "confidence": 0.75,
-                "metadata": {"source_kind": source_kind},
+                "confidence": 0.82,
+                "metadata": {
+                    "source_kind": source_kind,
+                    "object_type": obj.get("object_type") or "",
+                    "object_belonging": obj.get("metadata", {}).get("extension_object_kind") or "",
+                    "entry_points": entry_points,
+                    "external_calls": external_calls,
+                    "local_calls": local_calls,
+                    "files": files,
+                    "format": "compact_object_card/v1",
+                },
             }
         )
     return cards
+
+
+OBJECT_TYPE_LABELS = {
+    "Catalog": "справочник",
+    "Document": "документ",
+    "DataProcessor": "обработка",
+    "Report": "отчет",
+    "InformationRegister": "регистр сведений",
+    "AccumulationRegister": "регистр накопления",
+    "Enum": "перечисление",
+    "CommonModule": "общий модуль",
+    "ExchangePlan": "план обмена",
+    "BusinessProcess": "бизнес-процесс",
+    "Task": "задача",
+}
+
+
+def render_object_card(
+    *,
+    obj: dict,
+    info: SourceInfo,
+    source_kind: str,
+    attrs: list[dict],
+    tabs: list[dict],
+    forms: list[dict],
+    templates: list[dict],
+    modules: list[dict],
+    methods: list[dict],
+    exported: list[dict],
+    external_calls: list[str],
+    local_calls: list[str],
+    files: dict[str, list[str] | str],
+) -> str:
+    lines = [
+        f"Объект: {obj['full_name']}",
+        f"Тип: {object_type_label(obj.get('object_type') or '')}",
+        f"Синоним: {obj.get('synonym') or ''}",
+        f"Слой: {layer_label(source_kind, info)}",
+        f"Принадлежность: {belonging_label(source_kind, obj.get('metadata', {}).get('extension_object_kind') or '')}",
+        f"UUID: {obj.get('metadata', {}).get('uuid') or ''}",
+    ]
+    if obj.get("comment"):
+        lines.append(f"Комментарий: {obj.get('comment')}")
+
+    lines.extend(
+        [
+            "",
+            "Структура:",
+            count_line("Реквизиты", attrs, lambda item: field_label(item), limit=10),
+            count_line("Табличные части", tabs, lambda item: item.get("name") or "", limit=10),
+            count_line("Формы", forms, lambda item: item.get("name") or "", limit=10),
+            count_line("Макеты", templates, lambda item: item.get("name") or "", limit=10),
+            count_line("Модули", modules, lambda item: module_label(item), limit=10),
+            "",
+            "Методы:",
+            f"- Всего: {len(methods)}",
+            f"- Экспортные: {len(exported)}",
+        ]
+    )
+    lines.extend(bullets([method_entry(method) for method in sorted_methods(exported)], limit=12, empty="нет"))
+
+    lines.extend(
+        [
+            "",
+            "Зависимости:",
+            "- Внешние вызовы:",
+        ]
+    )
+    lines.extend(bullets(external_calls, limit=12, empty="нет"))
+    lines.append("- Локальные вызовы:")
+    lines.extend(bullets(local_calls, limit=12, empty="нет"))
+
+    lines.extend(["", "Файлы:"])
+    xml_path = files.get("xml")
+    if xml_path:
+        lines.append(f"- XML: {xml_path}")
+    lines.extend(f"- BSL: {path}" for path in files.get("bsl", []))
+    lines.extend(f"- Форма: {path}" for path in files.get("forms", []))
+    lines.extend(f"- Макет: {path}" for path in files.get("templates", []))
+
+    lines.extend(["", "Контроль изменений:"])
+    if obj.get("file_hash"):
+        lines.append(f"- XML hash: {obj['file_hash']}")
+    for module in sorted(modules, key=lambda row: row.get("path") or row.get("name") or "")[:8]:
+        if module.get("code_hash"):
+            lines.append(f"- {module.get('name') or module.get('module_kind') or 'Module'} hash: {module['code_hash']}")
+
+    lines.extend(
+        [
+            "",
+            "Навигация:",
+            "- Структура объекта: get_configuration_object_context(object_id)",
+            navigation_method_line(exported),
+            "- Полный код: Git/src по указанным путям",
+        ]
+    )
+    return "\n".join(line for line in lines if line is not None)
+
+
+def object_type_label(object_type: str) -> str:
+    label = OBJECT_TYPE_LABELS.get(object_type)
+    return f"{label} ({object_type})" if label else object_type
+
+
+def layer_label(source_kind: str, info: SourceInfo) -> str:
+    if source_kind == "extension":
+        return f"расширение {info.synonym or info.name or ''}".strip()
+    if source_kind in {"configuration", "standard"}:
+        return "типовая конфигурация"
+    if source_kind == "external":
+        return "внешняя обработка/отчет"
+    return source_kind
+
+
+def belonging_label(source_kind: str, extension_kind: str) -> str:
+    if source_kind != "extension":
+        return "типовой объект"
+    if extension_kind == "own":
+        return "собственный объект расширения"
+    if extension_kind == "adopted":
+        return "заимствованный объект расширения"
+    return "объект расширения"
+
+
+def count_line(title: str, items: list[dict], render, limit: int = 10) -> str:
+    labels = [render(item) for item in items[:limit]]
+    labels = [label for label in labels if label]
+    suffix = ""
+    if labels:
+        suffix = ": " + ", ".join(labels)
+        if len(items) > limit:
+            suffix += f", ... (+{len(items) - limit})"
+    return f"- {title}: {len(items)}{suffix}"
+
+
+def field_label(field: dict) -> str:
+    name = field.get("name") or ""
+    value_type = field.get("value_type") or ""
+    return f"{name} ({value_type})" if value_type else name
+
+
+def module_label(module: dict) -> str:
+    name = module.get("name") or module.get("module_kind") or "Module"
+    lines = module.get("metadata", {}).get("lines")
+    return f"{name}, {lines} строк" if lines else name
+
+
+def sorted_methods(methods: list[dict]) -> list[dict]:
+    return sorted(methods, key=lambda row: (row.get("start_line") or 0, row.get("name") or ""))
+
+
+def method_entry(method: dict) -> str:
+    signature = compact_signature(method.get("signature") or method.get("name") or "")
+    line_part = ""
+    if method.get("start_line") or method.get("end_line"):
+        line_part = f", строки {method.get('start_line') or ''}-{method.get('end_line') or ''}"
+    return f"{signature}{line_part}"
+
+
+def compact_signature(signature: str, limit: int = 120) -> str:
+    text = re.sub(r"\s+", " ", signature or "").strip()
+    return text if len(text) <= limit else text[: limit - 3].rstrip() + "..."
+
+
+def bullets(items: list[str], limit: int = 10, empty: str = "нет") -> list[str]:
+    values = [item for item in items[:limit] if item]
+    if not values:
+        return [f"  - {empty}"]
+    result = [f"  - {item}" for item in values]
+    if len(items) > limit:
+        result.append(f"  - ... (+{len(items) - limit})")
+    return result
+
+
+def navigation_method_line(exported: list[dict]) -> str:
+    if not exported:
+        return "- Метод: get_configuration_method_context(method_id)"
+    preferred = next((method for method in exported if method.get("name") == "Печать"), None)
+    preferred = preferred or next((method for method in exported if method.get("name") == "СведенияОВнешнейОбработке"), exported[0])
+    return f"- Метод {preferred.get('name')}: get_configuration_method_context(method_id)"
+
+
+def object_files(obj: dict, modules: list[dict], templates: list[dict], forms: list[dict]) -> dict[str, list[str] | str]:
+    return {
+        "xml": obj.get("xml_path") or "",
+        "bsl": [module.get("path") for module in modules if module.get("path")],
+        "templates": [template.get("path") for template in templates if template.get("path")],
+        "forms": [form.get("xml_path") for form in forms if form.get("xml_path")],
+    }
+
+
+def group_relations_by_object(relations: list[dict], methods: list[dict], fields: list[dict]) -> dict[str, list[dict]]:
+    method_to_object = {method.get("id"): method.get("object_id") for method in methods}
+    field_to_object = {field.get("id"): field.get("object_id") for field in fields}
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for relation in relations:
+        object_id = None
+        if relation.get("source_type") == "method":
+            object_id = method_to_object.get(relation.get("source_id"))
+        elif relation.get("source_type") == "field":
+            object_id = field_to_object.get(relation.get("source_id"))
+        if object_id:
+            grouped[object_id].append(relation)
+    return grouped
+
+
+def unique_relation_targets(relations: list[dict], relation_type: str, limit: int = 12) -> list[str]:
+    result = []
+    seen = set()
+    for relation in relations:
+        if relation.get("relation_type") != relation_type:
+            continue
+        value = relation.get("target_full_name") or ""
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def unique_local_call_names(relations: list[dict], methods: list[dict], limit: int = 12) -> list[str]:
+    method_name_by_id = {method.get("id"): method.get("name") for method in methods}
+    result = []
+    seen = set()
+    for relation in relations:
+        if relation.get("relation_type") != "local_call":
+            continue
+        value = method_name_by_id.get(relation.get("target_id")) or relation.get("target_full_name") or ""
+        if "." in value:
+            value = value.rsplit(".", 1)[-1]
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+        if len(result) >= limit:
+            break
+    return result
 
 
 def group_by_object(rows) -> dict[str, list[dict]]:

@@ -23,6 +23,23 @@ SOURCE_PATTERNS = [
     ("CommonModule", re.compile(r"(?:ОбщиеМодули|Метаданные\.ОбщиеМодули)\.([A-Za-zА-Яа-яЁё0-9_]+)")),
 ]
 
+IDENTIFIER = r"[A-Za-zА-Яа-яЁё_][A-Za-zА-Яа-яЁё0-9_]*"
+STRING_RE = re.compile(r'"(?:[^"]|"")*"')
+ASSIGNMENT_RE = re.compile(rf"(?m)^\s*(?P<name>{IDENTIFIER})\s*=")
+EXTERNAL_CALL_RE = re.compile(rf"(?<![.A-Za-zА-Яа-яЁё0-9_])(?P<target>{IDENTIFIER})\.(?P<method>{IDENTIFIER})\s*\(")
+LOCAL_CALL_RE = re.compile(rf"(?<![.A-Za-zА-Яа-яЁё0-9_])(?P<method>{IDENTIFIER})\s*\(")
+LOCAL_CALL_SKIP = {
+    "Если",
+    "ИначеЕсли",
+    "Пока",
+    "Для",
+    "Процедура",
+    "Функция",
+    "Новый",
+    "Возврат",
+    "Попытка",
+}
+
 
 def parse_bsl_methods(text: str) -> list[dict]:
     lines = text.splitlines()
@@ -125,3 +142,92 @@ def extract_relations(method_identifier: str, method_full_name: str, body: str, 
                 }
             )
     return relations
+
+
+def extract_call_relations(
+    method_identifier: str,
+    method_full_name: str,
+    body: str,
+    path: str,
+    start_line: int,
+    snapshot_id: str,
+    local_methods: dict[str, dict[str, str]],
+    ignored_external_targets: set[str] | None = None,
+):
+    relations = []
+    code = code_for_call_scan(body)
+    ignored_targets = set(ignored_external_targets or set()) | assigned_names(code)
+    seen = set()
+
+    for match in EXTERNAL_CALL_RE.finditer(code):
+        target = match.group("target")
+        name = match.group("method")
+        if target in ignored_targets:
+            continue
+        target_full_name = f"{target}.{name}"
+        key = ("external_call", target_full_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        relations.append(
+            {
+                "id": f"{method_identifier}:rel:external_call:{sha1_text(target_full_name)[:12]}",
+                "snapshot_id": snapshot_id,
+                "source_type": "method",
+                "source_id": method_identifier,
+                "source_full_name": method_full_name,
+                "relation_type": "external_call",
+                "target_type": "bsl_call",
+                "target_id": None,
+                "target_full_name": target_full_name,
+                "confidence": 0.65,
+                "source_location": {"path": path, "method_start_line": start_line},
+                "metadata": {"detected_by": "bsl_call_regex", "target": target, "method": name},
+            }
+        )
+
+    for match in LOCAL_CALL_RE.finditer(code):
+        name = match.group("method")
+        if name in LOCAL_CALL_SKIP or name not in local_methods:
+            continue
+        target = local_methods[name]
+        target_id = target.get("id")
+        if target_id == method_identifier:
+            continue
+        target_full_name = target.get("full_name") or name
+        key = ("local_call", target_id or target_full_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        relations.append(
+            {
+                "id": f"{method_identifier}:rel:local_call:{sha1_text(target_full_name)[:12]}",
+                "snapshot_id": snapshot_id,
+                "source_type": "method",
+                "source_id": method_identifier,
+                "source_full_name": method_full_name,
+                "relation_type": "local_call",
+                "target_type": "method",
+                "target_id": target_id,
+                "target_full_name": target_full_name,
+                "confidence": 0.8,
+                "source_location": {"path": path, "method_start_line": start_line},
+                "metadata": {"detected_by": "bsl_local_call_regex", "method": name},
+            }
+        )
+
+    return relations
+
+
+def code_for_call_scan(body: str) -> str:
+    lines = []
+    for line in body.splitlines():
+        code = line.split("//", 1)[0]
+        code = STRING_RE.sub('""', code)
+        if code.strip():
+            lines.append(code)
+    return "\n".join(lines)
+
+
+def assigned_names(code: str) -> set[str]:
+    return {match.group("name") for match in ASSIGNMENT_RE.finditer(code)}
