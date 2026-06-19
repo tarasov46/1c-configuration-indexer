@@ -10,6 +10,7 @@ from .xml_utils import safe_id_part, safe_rel, sha1_text
 
 PROJECT_SCHEMA_VERSION = "configuration-mcp/project-bundle/1"
 MANIFEST_NAME = "configuration-mcp.yaml"
+EXTENSION_COLLECTION_DIRS = ("extensions", "exchanges")
 
 TABLE_NAMES = [
     "configuration_products",
@@ -93,29 +94,44 @@ def detect_project(root: Path) -> ProjectLayout:
 def discover_extensions(root: Path, base_src: Path, warnings: list[str]) -> list[ExtensionEntry]:
     result: list[ExtensionEntry] = []
     seen: set[Path] = set()
+    seen_identities: set[tuple[str, str]] = set()
 
-    extensions_root = root / "extensions"
-    if extensions_root.exists() and extensions_root.is_dir():
+    for collection_name in EXTENSION_COLLECTION_DIRS:
+        extensions_root = root / collection_name
+        if not extensions_root.exists() or not extensions_root.is_dir():
+            continue
         for child in sorted(extensions_root.iterdir(), key=lambda item: item.name.lower()):
             if child.is_dir() and (child / "Configuration.xml").exists():
                 info = detect_source(child)
                 if info.is_valid and info.source_kind == "extension":
-                    result.append(ExtensionEntry(path=child, name=info.name or child.name, source="extensions"))
+                    result.append(ExtensionEntry(path=child, name=info.name or child.name, source=collection_name))
                     seen.add(normalized_path(child))
+                    seen_identities.add(extension_identity(info, child.name))
                 elif info.is_valid:
                     warnings.append(f"Skipped {safe_rel(child, root)}: source_kind={info.source_kind}")
 
     for child in sorted(root.iterdir(), key=lambda item: item.name.lower()):
         if not child.is_dir() or normalized_path(child) in seen or same_path(child, base_src):
             continue
-        if child.name == "extensions" or not (child / "Configuration.xml").exists():
+        if child.name in EXTENSION_COLLECTION_DIRS or not (child / "Configuration.xml").exists():
             continue
         info = detect_source(child)
         if info.is_valid and info.source_kind == "extension":
+            identity = extension_identity(info, child.name)
+            if identity in seen_identities:
+                warnings.append(f"Skipped duplicate extension {safe_rel(child, root)}: name={info.name or child.name}")
+                continue
             result.append(ExtensionEntry(path=child, name=info.name or child.name, source="sibling"))
             seen.add(normalized_path(child))
+            seen_identities.add(identity)
 
     return result
+
+
+def extension_identity(info: SourceInfo, fallback_name: str) -> tuple[str, str]:
+    name = info.name or fallback_name
+    version = info.version or info.extension_compatibility_mode or ""
+    return name.strip().casefold(), version.strip().casefold()
 
 
 def parse_project(options: ProjectIndexOptions) -> dict:
