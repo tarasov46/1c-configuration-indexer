@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from configuration_indexer.project import detect_project
+from configuration_indexer.project import ProjectIndexOptions, detect_project, parse_project
 
 
 BASE_XML = """<?xml version="1.0" encoding="UTF-8"?>
@@ -36,7 +36,7 @@ def extension_xml(name: str, version: str = "Version8_3_21") -> str:
 
 
 class ProjectDiscoveryTests(unittest.TestCase):
-    def test_detects_extensions_from_exchanges_and_skips_sibling_duplicate(self) -> None:
+    def test_detects_src_and_exchanges(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write_config(root / "src", BASE_XML)
@@ -49,7 +49,54 @@ class ProjectDiscoveryTests(unittest.TestCase):
         self.assertTrue(layout.is_valid)
         self.assertEqual([entry.name for entry in layout.extensions], ["ExtA", "ExtB"])
         self.assertEqual([entry.source for entry in layout.extensions], ["exchanges", "exchanges"])
-        self.assertTrue(any("Skipped duplicate extension src exchange" in warning for warning in layout.warnings))
+        self.assertEqual(layout.warnings, [])
+
+    def test_detects_src_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_config(root / "src", BASE_XML)
+
+            layout = detect_project(root)
+
+        self.assertTrue(layout.is_valid)
+        self.assertIsNotNone(layout.base_src)
+        self.assertEqual(layout.extensions, [])
+
+    def test_detects_exchanges_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_config(root / "exchanges" / "ExtA", extension_xml("ExtA"))
+
+            layout = detect_project(root)
+            project = parse_project(
+                ProjectIndexOptions(
+                    project_root=root,
+                    base_mode="detect",
+                    product_code="erp",
+                    release_version="2.5.27.47",
+                    standard_snapshot_id="standard:erp:2.5.27.47",
+                    include_code_text=False,
+                )
+            )
+
+        self.assertTrue(layout.is_valid)
+        self.assertIsNone(layout.base_src)
+        self.assertEqual([entry.name for entry in layout.extensions], ["ExtA"])
+        self.assertEqual(project["summary"]["extensions"], 1)
+        self.assertEqual(project["summary"]["product_code"], "erp")
+        self.assertEqual(project["summary"]["release_version"], "2.5.27.47")
+        self.assertEqual(project["project_info"]["layout"], "exchanges")
+
+    def test_detects_exchanges_folder_as_project_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "exchanges"
+            write_config(root / "ExtA", extension_xml("ExtA"))
+
+            layout = detect_project(root)
+
+        self.assertTrue(layout.is_valid)
+        self.assertIsNone(layout.base_src)
+        self.assertEqual([entry.name for entry in layout.extensions], ["ExtA"])
 
 
 def write_config(path: Path, content: str) -> None:

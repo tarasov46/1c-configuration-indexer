@@ -10,7 +10,7 @@ from .xml_utils import safe_id_part, safe_rel, sha1_text
 
 PROJECT_SCHEMA_VERSION = "configuration-mcp/project-bundle/1"
 MANIFEST_NAME = "configuration-mcp.yaml"
-EXTENSION_COLLECTION_DIRS = ("extensions", "exchanges")
+EXTENSIONS_DIR_NAME = "exchanges"
 
 TABLE_NAMES = [
     "configuration_products",
@@ -56,6 +56,8 @@ class ProjectIndexOptions:
     project_root: Path
     include_code_text: bool = True
     base_mode: str = "index"
+    product_code: str = ""
+    release_version: str = ""
     client_id: str = ""
     base_id: str = ""
     base_profile_id: str = ""
@@ -72,15 +74,18 @@ def detect_project(root: Path) -> ProjectLayout:
     base_src = root / "src"
     warnings: list[str] = []
     if not (base_src / "Configuration.xml").exists():
+        base_src = None
+
+    extensions = discover_extensions(root, base_src, warnings)
+    if base_src is None and not extensions:
         return ProjectLayout(
             root=root,
             is_valid=False,
             manifest_path=manifest_path if manifest_path.exists() else None,
             warnings=warnings,
-            error="Project folder must contain src/Configuration.xml",
+            error="Project folder must contain src/Configuration.xml or exchanges/*/Configuration.xml",
         )
 
-    extensions = discover_extensions(root, base_src, warnings)
     return ProjectLayout(
         root=root,
         is_valid=True,
@@ -91,29 +96,19 @@ def detect_project(root: Path) -> ProjectLayout:
     )
 
 
-def discover_extensions(root: Path, base_src: Path, warnings: list[str]) -> list[ExtensionEntry]:
+def discover_extensions(root: Path, base_src: Path | None, warnings: list[str]) -> list[ExtensionEntry]:
     result: list[ExtensionEntry] = []
     seen: set[Path] = set()
     seen_identities: set[tuple[str, str]] = set()
 
-    for collection_name in EXTENSION_COLLECTION_DIRS:
-        extensions_root = root / collection_name
-        if not extensions_root.exists() or not extensions_root.is_dir():
-            continue
-        for child in sorted(extensions_root.iterdir(), key=lambda item: item.name.lower()):
-            if child.is_dir() and (child / "Configuration.xml").exists():
-                info = detect_source(child)
-                if info.is_valid and info.source_kind == "extension":
-                    result.append(ExtensionEntry(path=child, name=info.name or child.name, source=collection_name))
-                    seen.add(normalized_path(child))
-                    seen_identities.add(extension_identity(info, child.name))
-                elif info.is_valid:
-                    warnings.append(f"Skipped {safe_rel(child, root)}: source_kind={info.source_kind}")
+    extensions_root = root if root.name.casefold() == EXTENSIONS_DIR_NAME else root / EXTENSIONS_DIR_NAME
+    if not extensions_root.exists() or not extensions_root.is_dir():
+        return result
 
-    for child in sorted(root.iterdir(), key=lambda item: item.name.lower()):
-        if not child.is_dir() or normalized_path(child) in seen or same_path(child, base_src):
+    for child in sorted(extensions_root.iterdir(), key=lambda item: item.name.lower()):
+        if not child.is_dir() or normalized_path(child) in seen or not (child / "Configuration.xml").exists():
             continue
-        if child.name in EXTENSION_COLLECTION_DIRS or not (child / "Configuration.xml").exists():
+        if base_src is not None and same_path(child, base_src):
             continue
         info = detect_source(child)
         if info.is_valid and info.source_kind == "extension":
@@ -121,9 +116,11 @@ def discover_extensions(root: Path, base_src: Path, warnings: list[str]) -> list
             if identity in seen_identities:
                 warnings.append(f"Skipped duplicate extension {safe_rel(child, root)}: name={info.name or child.name}")
                 continue
-            result.append(ExtensionEntry(path=child, name=info.name or child.name, source="sibling"))
+            result.append(ExtensionEntry(path=child, name=info.name or child.name, source=EXTENSIONS_DIR_NAME))
             seen.add(normalized_path(child))
             seen_identities.add(identity)
+        elif info.is_valid:
+            warnings.append(f"Skipped {safe_rel(child, root)}: source_kind={info.source_kind}")
 
     return result
 
@@ -136,26 +133,35 @@ def extension_identity(info: SourceInfo, fallback_name: str) -> tuple[str, str]:
 
 def parse_project(options: ProjectIndexOptions) -> dict:
     layout = detect_project(options.project_root)
-    if not layout.is_valid or layout.base_src is None:
+    if not layout.is_valid:
         raise ValueError(layout.error or "Invalid project folder")
 
     indexed_at = datetime.now().isoformat(timespec="seconds")
-    base_source_info = detect_source(layout.base_src)
-    if not base_source_info.is_valid:
-        raise ValueError(base_source_info.error or "Cannot detect base src")
-    base_info = source_info_to_dict(base_source_info)
-    product_code = base_info.get("product_code") or "unknown"
-    release_version = base_info.get("release_version") or "unknown"
+    base_info = {}
+    product_code = options.product_code or "unknown"
+    release_version = options.release_version or "unknown"
+    if layout.base_src is not None:
+        base_source_info = detect_source(layout.base_src)
+        if not base_source_info.is_valid:
+            raise ValueError(base_source_info.error or "Cannot detect base src")
+        base_info = source_info_to_dict(base_source_info)
+        product_code = options.product_code or base_info.get("product_code") or "unknown"
+        release_version = options.release_version or base_info.get("release_version") or "unknown"
     release_id = f"{product_code}:{release_version}"
     base_snapshot_id = options.standard_snapshot_id
     indexes = []
     base_objects_by_full_name = {}
+
+    if options.base_mode == "index" and layout.base_src is None:
+        raise ValueError("base_mode=index requires src/Configuration.xml")
 
     if options.base_mode == "index":
         base_index = parse_configuration(
             IndexOptions(
                 src_root=layout.base_src,
                 mode="standard",
+                product_code=product_code,
+                release_version=release_version,
                 include_code_text=options.include_code_text,
             )
         )
@@ -193,7 +199,10 @@ def parse_project(options: ProjectIndexOptions) -> dict:
                 "extension_name": None,
                 "is_active": True,
                 "status": "active",
-                "metadata": {"path": safe_rel(layout.base_src, layout.root), "base_mode": options.base_mode},
+                "metadata": {
+                    "path": safe_rel(layout.base_src, layout.root) if layout.base_src else "",
+                    "base_mode": options.base_mode,
+                },
             }
         )
     impacts = []
@@ -293,15 +302,16 @@ def parse_project(options: ProjectIndexOptions) -> dict:
         "metadata": {
             "project_root": str(layout.root),
             "manifest_path": str(layout.root / MANIFEST_NAME),
-            "base_src": safe_rel(layout.base_src, layout.root),
-            "layout": "src+extensions",
+            "base_src": safe_rel(layout.base_src, layout.root) if layout.base_src else "",
+            "layout": project_layout_kind(layout),
         },
     }
 
     project_info = {
         "root": str(layout.root),
         "manifest_path": str(layout.root / MANIFEST_NAME),
-        "base_src": str(layout.base_src),
+        "base_src": str(layout.base_src) if layout.base_src else "",
+        "layout": project_layout_kind(layout),
         "base_mode": options.base_mode,
         "client_id": client_id,
         "base_id": base_id,
@@ -434,7 +444,7 @@ def render_project_manifest(project: dict) -> str:
     lines = [
         "schema_version: \"configuration-mcp/project/1\"",
         "base:",
-        "  path: \"./src\"",
+        f"  path: {yaml_quote('./src' if info.get('base_src') else '')}",
         f"  product_code: {yaml_quote(info.get('product_code') or '')}",
         f"  release_version: {yaml_quote(info.get('release_version') or '')}",
         f"  standard_snapshot_id: {yaml_quote(info.get('standard_snapshot_id') or '')}",
@@ -487,6 +497,14 @@ def source_info_for_project_base(layout: ProjectLayout) -> SourceInfo | None:
         return None
     info = detect_source(layout.base_src)
     return info if info.is_valid else None
+
+
+def project_layout_kind(layout: ProjectLayout) -> str:
+    if layout.base_src and layout.extensions:
+        return "src+exchanges"
+    if layout.base_src:
+        return "src"
+    return "exchanges"
 
 
 def yaml_quote(value: str) -> str:

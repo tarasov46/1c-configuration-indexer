@@ -25,24 +25,30 @@ python -m venv .venv
 
 ## Project Layout
 
-Preferred:
+The project root can contain `src`, `exchanges`, or both.
 
 ```text
 project-root/
   src/
     Configuration.xml
-  extensions/
+  exchanges/
     ExtensionName/
       Configuration.xml
 ```
 
-Legacy sibling extension folders are also detected:
+`src` is the exported standard/base configuration. `exchanges` contains exported extensions.
+
+An extensions-only folder is also valid when the job provides `product_code`, `release_version`, and usually `standard_snapshot_id`:
 
 ```text
-project-root/
-  src/
-  src exchange/
+exchanges/
+  ExtensionName/
+    Configuration.xml
+  AnotherExtension/
+    Configuration.xml
 ```
+
+Arbitrary sibling folders such as `src exchange` are ignored; put extensions under `exchanges`.
 
 ## Autonomous Job
 
@@ -119,6 +125,8 @@ Write one debug JSON:
 ```powershell
 .\.venv\Scripts\configuration-indexer.exe run-project `
   --root "C:\path\to\project-root" `
+  --product-code erp `
+  --release-version 2.5.27.47 `
   --out-dir ".\out" `
   --no-code-text
 ```
