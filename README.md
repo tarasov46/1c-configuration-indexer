@@ -56,6 +56,25 @@ MCP should return a small job JSON. Example:
 
 [examples/indexing-job.example.json](examples/indexing-job.example.json)
 
+Production flow for an agent:
+
+1. Call the admin configuration MCP prepare tool.
+2. Save `data.indexing_job` as `indexing-job.json`.
+3. Run this indexer with `run-job`.
+4. Check the job with the admin MCP status tool.
+5. Apply the job with the admin MCP apply tool when the upload is complete.
+
+The job must contain enough context for extensions-only projects:
+
+- `input.source_path`: local project root, `src`, or `exchanges` folder.
+- `input.product_code`: for example `erp`.
+- `input.release_version`: for example `2.5.27.47`.
+- `input.standard_snapshot_id`: for example `standard:erp:2.5.27.47` when the standard release is known.
+
+Relative paths in `indexing-job.json` are resolved from the job file directory. This lets an agent clone a source repository next to the indexer and use paths such as `..\configuration-src`.
+
+Russian production runbook: [docs/agent-runbook.ru.md](docs/agent-runbook.ru.md)
+
 Run it:
 
 ```powershell

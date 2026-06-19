@@ -1,10 +1,13 @@
 {
-  "schema_version": "configuration-mcp/indexing-job/1",
+  "schema_version": "configuration-mcp/indexing-job/2",
   "job_id": "idx_example_001",
   "input": {
-    "source_path": "C:\\path\\to\\project-or-extension",
+    "source_path": "C:\\path\\to\\project-or-exchanges",
     "base_mode": "detect",
-    "standard_snapshot_id": "",
+    "product_code": "erp",
+    "release_version": "2.5.27.47",
+    "release_id": "erp:2.5.27.47",
+    "standard_snapshot_id": "standard:erp:2.5.27.47",
     "include_code_text": false,
     "max_chunk_bytes": 4194304
   },

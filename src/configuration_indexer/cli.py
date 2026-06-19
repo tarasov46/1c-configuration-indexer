@@ -188,23 +188,26 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def run_job(job_path: Path, out_dir_override: Path | None = None, no_upload: bool = False) -> dict:
-    job = json.loads(Path(job_path).read_text(encoding="utf-8"))
+    job_path = Path(job_path).resolve()
+    job_dir = job_path.parent
+    job = json.loads(job_path.read_text(encoding="utf-8"))
     input_config = job.get("input") or {}
     profile = job.get("profile") or {}
     output = job.get("output") or {}
     upload = job.get("upload") or {}
 
-    source_path = Path(
+    raw_source_path = (
         input_config.get("source_path")
         or input_config.get("project_root")
         or input_config.get("path")
         or job.get("source_path")
         or ""
     )
-    if not source_path:
+    if not raw_source_path:
         return {"ok": False, "exit_code": 2, "error": "input.source_path is required"}
+    source_path = resolve_job_path(raw_source_path, job_dir)
 
-    out_dir = out_dir_override or Path(output.get("out_dir") or "out")
+    out_dir = Path(out_dir_override).resolve() if out_dir_override else resolve_job_path(output.get("out_dir") or "out", job_dir)
     package_name = output.get("package_name") or f"index-package-{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     package_dir = out_dir / package_name
     include_code_text = bool(input_config.get("include_code_text", False))
@@ -284,6 +287,13 @@ def run_job(job_path: Path, out_dir_override: Path | None = None, no_upload: boo
             result["exit_code"] = 3
 
     return result
+
+
+def resolve_job_path(value: str | Path, base_dir: Path) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return (base_dir / path).resolve()
 
 
 if __name__ == "__main__":
