@@ -45,14 +45,16 @@ def to_v2_package(index: dict[str, Any]) -> dict[str, Any]:
     relations = build_relations(index, entity_ids, standard_snapshot_ids=standard_snapshot_ids)
     chunks = build_search_chunks(index, aliases_by_entity)
 
+    product_rows, release_rows = build_catalog_rows(index, standard_snapshot_ids)
+
     result: dict[str, Any] = {
         "schema_version": V2_SCHEMA_VERSION,
         "indexer_version": index.get("indexer_version", ""),
         "source_info": sanitize_source_info(index.get("source_info") or {}),
         "project_info": sanitize_json(index.get("project_info") or {}),
         "summary": sanitize_summary(index.get("summary") or {}),
-        "configuration_products": sanitize_rows(index.get("configuration_products") or []),
-        "configuration_product_releases": sanitize_rows(index.get("configuration_product_releases") or []),
+        "configuration_products": product_rows,
+        "configuration_product_releases": release_rows,
         "configuration_snapshots": sanitize_rows(index.get("configuration_snapshots") or []),
         "configuration_layers": build_layers(index),
         "configuration_index_runs": sanitize_rows(index.get("configuration_index_runs") or []),
@@ -84,6 +86,15 @@ def to_v2_package(index: dict[str, Any]) -> dict[str, Any]:
         }
     )
     return result
+
+
+def build_catalog_rows(index: dict[str, Any], standard_snapshot_ids: set[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not standard_snapshot_ids:
+        return [], []
+    return (
+        sanitize_rows(index.get("configuration_products") or []),
+        sanitize_rows(index.get("configuration_product_releases") or []),
+    )
 
 
 def build_entities(

@@ -70,6 +70,9 @@ def upload_package(options: PackageUploadOptions) -> PackageUploadResult:
         if not manifest_response["ok"]:
             result.error = "manifest upload failed"
             return result
+        if response_data(manifest_response).get("already_completed") is True:
+            result.ok = True
+            return result
 
         chunks = manifest.get("chunks") or []
         for position, chunk in enumerate(chunks, start=1):
@@ -235,3 +238,11 @@ def parse_response_json(response_text: str) -> dict[str, Any]:
     except (TypeError, ValueError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def response_data(response: dict[str, Any]) -> dict[str, Any]:
+    payload = response.get("response_json")
+    if not isinstance(payload, dict):
+        return {}
+    data = payload.get("data")
+    return data if isinstance(data, dict) else {}
