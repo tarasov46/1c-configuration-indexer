@@ -62,7 +62,8 @@ Production flow for an agent:
 2. Save `data.indexing_job` as `indexing-job.json`.
 3. Run this indexer with `run-job`.
 4. Check the job with the admin MCP status tool.
-5. Apply the job with the admin MCP apply tool when the upload is complete.
+5. For client projects and extensions, use the data after the upload job is `completed`.
+6. For standard releases, link the imported standard snapshot to the product release with the admin MCP release-link/finalize tool.
 
 The job must contain enough context for extensions-only projects:
 

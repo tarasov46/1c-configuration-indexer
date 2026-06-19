@@ -8,7 +8,8 @@
 4. Сохраняет `data.indexing_job` в `indexing-job.json`.
 5. Запускает индексатор командой `configuration-indexer run-job --job indexing-job.json`.
 6. Проверяет статус через admin MCP status/list tool.
-7. После успешной загрузки применяет job через admin MCP apply tool.
+7. Для клиентских проектов и расширений работает с данными, когда job перешел в `completed`.
+8. Для типовой конфигурации дополнительно привязывает `standard_snapshot_id` к релизу через admin MCP release-link/finalize tool.
 
 Агент не должен читать XML, BSL, jsonl, gzip chunks или большие JSON-пакеты в чат. Все тяжелые данные передает сам индексатор.
 
