@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from collections import defaultdict
 from copy import deepcopy
@@ -13,6 +14,13 @@ QUERY_CHUNK_PREVIEW_CHARS = 600
 CARD_CHUNK_MAX_CHARS = 1600
 MAX_QUERY_CHUNKS = 1000
 MAX_TEXT_PREVIEW_ROWS = 5000
+STANDARD_NAVIGATION_ENTITY_TYPES = {"object", "field", "form", "template", "module"}
+STANDARD_RELATION_TYPES = {
+    "external_call": "calls_object",
+    "uses_metadata_object": "uses_object",
+    "field_value_type": "field_type_object",
+}
+STANDARD_RELATIONS_PER_SOURCE_KIND = 8
 
 V2_PACKAGED_TABLES = [
     "configuration_products",
@@ -40,9 +48,15 @@ def to_v2_package(index: dict[str, Any]) -> dict[str, Any]:
         aliases_by_entity,
         include_text_previews=include_text_previews,
         standard_snapshot_ids=standard_snapshot_ids,
+        standard_navigation_only=standard_source,
     )
     entity_ids = {row["id"] for row in entities if row.get("id")}
-    relations = build_relations(index, entity_ids, standard_snapshot_ids=standard_snapshot_ids)
+    relations = build_relations(
+        index,
+        entity_ids,
+        standard_snapshot_ids=standard_snapshot_ids,
+        standard_navigation_only=standard_source,
+    )
     chunks = build_search_chunks(index, aliases_by_entity)
 
     product_rows, release_rows = build_catalog_rows(index, standard_snapshot_ids)
@@ -77,10 +91,15 @@ def to_v2_package(index: dict[str, Any]) -> dict[str, Any]:
             ),
             "text_previews": include_text_previews,
             "standard_compact_profile": standard_source,
+            "standard_navigation_profile": standard_source,
+            "standard_navigation_entity_types": sorted(STANDARD_NAVIGATION_ENTITY_TYPES) if standard_source else [],
+            "standard_relations_per_source_kind": STANDARD_RELATIONS_PER_SOURCE_KIND if standard_source else None,
             "method_entities": method_entities,
             "method_entities_omitted": max(0, len(index.get("configuration_methods") or []) - method_entities),
             "query_entities": query_entities,
             "query_entities_omitted": max(0, len(index.get("configuration_queries") or []) - query_entities),
+            "relations_input_rows": source_relations,
+            "relations_output_rows": len(relations),
             "relations_omitted": max(0, source_relations - len(relations)),
             "schema_version": V2_SCHEMA_VERSION,
         }
@@ -103,6 +122,7 @@ def build_entities(
     *,
     include_text_previews: bool,
     standard_snapshot_ids: set[str],
+    standard_navigation_only: bool,
 ) -> list[dict[str, Any]]:
     entities: list[dict[str, Any]] = []
 
@@ -180,6 +200,8 @@ def build_entities(
         )
 
     for method in index.get("configuration_methods") or []:
+        if standard_navigation_only:
+            continue
         if method.get("snapshot_id") in standard_snapshot_ids and not method.get("is_export"):
             continue
         data = compact_data(method, ["is_function", "is_export", "signature", "start_line", "end_line", "metadata"])
@@ -205,6 +227,8 @@ def build_entities(
         )
 
     for query in index.get("configuration_queries") or []:
+        if standard_navigation_only:
+            continue
         if query.get("snapshot_id") in standard_snapshot_ids:
             continue
         data = compact_data(query, ["query_kind", "path", "start_line", "end_line", "query_hash", "metadata"])
@@ -233,8 +257,16 @@ def build_entities(
     return [row for row in entities if row.get("id")]
 
 
-def build_relations(index: dict[str, Any], entity_ids: set[str], *, standard_snapshot_ids: set[str]) -> list[dict[str, Any]]:
+def build_relations(
+    index: dict[str, Any],
+    entity_ids: set[str],
+    *,
+    standard_snapshot_ids: set[str],
+    standard_navigation_only: bool,
+) -> list[dict[str, Any]]:
     rows = sanitize_rows(index.get("configuration_relations") or [])
+    if standard_navigation_only:
+        return build_standard_navigation_relations(index, rows)
     if not standard_snapshot_ids:
         return rows
     result = []
@@ -244,6 +276,147 @@ def build_relations(index: dict[str, Any], entity_ids: set[str], *, standard_sna
             continue
         result.append(row)
     return result
+
+
+def build_standard_navigation_relations(index: dict[str, Any], rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    lookup = build_navigation_lookup(index)
+    grouped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+
+    for row in rows:
+        source_relation_type = row.get("relation_type") or ""
+        relation_type = STANDARD_RELATION_TYPES.get(source_relation_type)
+        if not relation_type:
+            continue
+
+        source_object_id = lookup["entity_to_object"].get(row.get("source_id") or "") or row.get("source_object_id") or ""
+        target_object_id = resolve_relation_target_object(row, lookup)
+        if not source_object_id or not target_object_id or source_object_id == target_object_id:
+            continue
+
+        snapshot_id = row.get("snapshot_id") or ""
+        key = (snapshot_id, source_object_id, target_object_id, relation_type)
+        item = grouped.get(key)
+        if not item:
+            item = {
+                "id": "",
+                "snapshot_id": snapshot_id,
+                "source_entity_id": source_object_id,
+                "target_entity_id": target_object_id,
+                "source_object_id": source_object_id,
+                "target_object_id": target_object_id,
+                "source_id": source_object_id,
+                "target_id": target_object_id,
+                "relation_type": relation_type,
+                "relation_kind": "standard_object_navigation",
+                "source_name": lookup["object_names"].get(source_object_id) or row.get("source_full_name") or "",
+                "target_name": lookup["object_names"].get(target_object_id) or row.get("target_full_name") or "",
+                "metadata": {
+                    "profile": "standard_navigation",
+                    "source_relation_types": [],
+                    "count": 0,
+                    "samples": [],
+                },
+            }
+            grouped[key] = item
+        metadata = item["metadata"]
+        metadata["count"] += 1
+        if source_relation_type and source_relation_type not in metadata["source_relation_types"]:
+            metadata["source_relation_types"].append(source_relation_type)
+        samples = metadata["samples"]
+        if len(samples) < 5:
+            sample = {
+                "source": row.get("source_full_name") or row.get("source_name") or "",
+                "target": row.get("target_full_name") or row.get("target_name") or "",
+            }
+            location = sanitize_json(row.get("source_location") or {})
+            if location:
+                sample["location"] = location
+            samples.append(sample)
+
+    by_source_kind: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    for item in grouped.values():
+        by_source_kind[(item["source_object_id"], item["relation_type"])].append(item)
+
+    result: list[dict[str, Any]] = []
+    for items in by_source_kind.values():
+        items.sort(key=lambda row: (-int(row.get("metadata", {}).get("count") or 0), row.get("target_name") or ""))
+        result.extend(items[:STANDARD_RELATIONS_PER_SOURCE_KIND])
+
+    for item in result:
+        key = "|".join(
+            [
+                item.get("snapshot_id") or "",
+                item.get("source_object_id") or "",
+                item.get("target_object_id") or "",
+                item.get("relation_type") or "",
+            ]
+        )
+        item["id"] = f"{item.get('snapshot_id')}:rel:standard_navigation:{sha1_text(key)[:16]}"
+        item["metadata"] = sanitize_json(item["metadata"])
+
+    result.sort(key=lambda row: (row.get("source_name") or "", row.get("relation_type") or "", row.get("target_name") or ""))
+    return result
+
+
+def build_navigation_lookup(index: dict[str, Any]) -> dict[str, dict[str, str]]:
+    entity_to_object: dict[str, str] = {}
+    object_by_full_name: dict[str, str] = {}
+    common_module_by_name: dict[str, str] = {}
+    object_names: dict[str, str] = {}
+
+    for obj in index.get("configuration_objects") or []:
+        object_id = obj.get("id") or ""
+        if not object_id:
+            continue
+        entity_to_object[object_id] = object_id
+        full_name = obj.get("full_name") or obj.get("name") or ""
+        if full_name:
+            object_by_full_name[full_name] = object_id
+            object_names[object_id] = full_name
+        if obj.get("object_type") == "CommonModule" and obj.get("name"):
+            common_module_by_name[obj["name"]] = object_id
+
+    for collection_name in [
+        "configuration_object_fields",
+        "configuration_forms",
+        "configuration_templates",
+        "configuration_modules",
+        "configuration_methods",
+        "configuration_queries",
+    ]:
+        for row in index.get(collection_name) or []:
+            row_id = row.get("id") or ""
+            object_id = row.get("object_id") or ""
+            if row_id and object_id:
+                entity_to_object[row_id] = object_id
+
+    return {
+        "entity_to_object": entity_to_object,
+        "object_by_full_name": object_by_full_name,
+        "common_module_by_name": common_module_by_name,
+        "object_names": object_names,
+    }
+
+
+def resolve_relation_target_object(row: dict[str, Any], lookup: dict[str, dict[str, str]]) -> str:
+    target_id = row.get("target_id") or ""
+    if target_id and target_id in lookup["entity_to_object"]:
+        return lookup["entity_to_object"][target_id]
+
+    target_full_name = row.get("target_full_name") or ""
+    if target_full_name in lookup["object_by_full_name"]:
+        return lookup["object_by_full_name"][target_full_name]
+
+    parts = target_full_name.split(".")
+    if len(parts) >= 2:
+        object_full_name = ".".join(parts[:2])
+        if object_full_name in lookup["object_by_full_name"]:
+            return lookup["object_by_full_name"][object_full_name]
+
+    if parts and parts[0] in lookup["common_module_by_name"]:
+        return lookup["common_module_by_name"][parts[0]]
+
+    return ""
 
 
 def entity_row(
@@ -590,3 +763,7 @@ def int_or_none(value: Any) -> int | None:
 def safe_part(value: str) -> str:
     text = re.sub(r"[^0-9A-Za-zА-Яа-яЁё_]+", "_", value or "").strip("_")
     return text or "layer"
+
+
+def sha1_text(value: str) -> str:
+    return hashlib.sha1((value or "").encode("utf-8")).hexdigest()
