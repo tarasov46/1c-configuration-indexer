@@ -300,8 +300,12 @@ def build_standard_navigation_relations(index: dict[str, Any], rows: list[dict[s
             item = {
                 "id": "",
                 "snapshot_id": snapshot_id,
+                "source_type": "object",
                 "source_entity_id": source_object_id,
+                "source_full_name": lookup["object_names"].get(source_object_id) or row.get("source_full_name") or "",
+                "target_type": "object",
                 "target_entity_id": target_object_id,
+                "target_full_name": lookup["object_names"].get(target_object_id) or row.get("target_full_name") or "",
                 "source_object_id": source_object_id,
                 "target_object_id": target_object_id,
                 "source_id": source_object_id,
@@ -310,6 +314,7 @@ def build_standard_navigation_relations(index: dict[str, Any], rows: list[dict[s
                 "relation_kind": "standard_object_navigation",
                 "source_name": lookup["object_names"].get(source_object_id) or row.get("source_full_name") or "",
                 "target_name": lookup["object_names"].get(target_object_id) or row.get("target_full_name") or "",
+                "confidence": 0.82,
                 "metadata": {
                     "profile": "standard_navigation",
                     "source_relation_types": [],

@@ -179,6 +179,10 @@ class V2PackageTests(unittest.TestCase):
         relation_types = {row["relation_type"] for row in package["configuration_relations"]}
         self.assertEqual(relation_types, {"calls_object", "field_type_object"})
         for relation in package["configuration_relations"]:
+            self.assertEqual(relation["source_type"], "object")
+            self.assertEqual(relation["target_type"], "object")
+            self.assertEqual(relation["source_full_name"], "Document.ЗаказКлиента")
+            self.assertTrue(relation["target_full_name"])
             self.assertEqual(relation["source_entity_id"], doc_id)
             self.assertIn(relation["target_entity_id"], {target_id, catalog_id})
             self.assertEqual(relation["relation_kind"], "standard_object_navigation")
