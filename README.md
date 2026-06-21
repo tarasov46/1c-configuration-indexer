@@ -122,11 +122,38 @@ The package format is compact v2:
   --token-env CONFIGURATION_INDEXER_UPLOAD_TOKEN
 ```
 
+`upload-package` retries transient chunk failures by default. It stops on the
+first unrecoverable chunk error so the agent can inspect the result JSON and
+retry only the failed pieces instead of starting the whole import again.
+
 Upload protocol:
 
 - `POST` manifest with header `X-Configuration-Upload-Part: manifest`
 - `POST` each gzip chunk with header `X-Configuration-Upload-Part: chunk`
 - `POST` completion marker with header `X-Configuration-Upload-Part: complete`
+
+## Recovery Commands
+
+Retry only failed chunks from a saved upload result:
+
+```powershell
+.\.venv\Scripts\configuration-indexer.exe retry-failed-package `
+  --manifest ".\out\index-package\manifest.json" `
+  --failed-log ".\upload-result.json" `
+  --upload-url "https://example.com/configuration-index-upload" `
+  --token-env CONFIGURATION_INDEXER_UPLOAD_TOKEN
+```
+
+Rebuild an existing package with smaller chunk files without reparsing the
+original 1C export:
+
+```powershell
+.\.venv\Scripts\configuration-indexer.exe rechunk-package `
+  --manifest ".\out\index-package\manifest.json" `
+  --out-dir ".\out\index-package-rechunked" `
+  --job-id "idx_retry_001" `
+  --max-chunk-bytes 1048576
+```
 
 ## Debug Commands
 

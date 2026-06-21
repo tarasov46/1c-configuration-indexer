@@ -13,6 +13,11 @@
 
 Агент не должен читать XML, BSL, jsonl, gzip chunks или большие JSON-пакеты в чат. Все тяжелые данные передает сам индексатор.
 
+Если upload оборвался, агент не запускает парсинг заново. Нужно сохранить JSON
+результата загрузки и выполнить `retry-failed-package` по тем же `manifest.json`
+и upload URL. Если проблема в размере chunks, агент сначала выполняет
+`rechunk-package`, а потом загружает новый пакет.
+
 ## Поддерживаемая структура папок
 
 ```text
@@ -65,3 +70,25 @@ work/
 - `configuration_search_chunks` содержит карточки объектов;
 - поиск через `search_configuration_cards` находит объекты из нескольких расширений;
 - `get_configuration_base_profile` показывает нужную версию базы и слои расширений.
+
+## Восстановление после сбоя загрузки
+
+Повторить только упавшие chunks:
+
+```powershell
+configuration-indexer retry-failed-package `
+  --manifest ".\out\index-package\manifest.json" `
+  --failed-log ".\upload-result.json" `
+  --upload-url "<upload webhook>" `
+  --token-env CONFIGURATION_INDEXER_UPLOAD_TOKEN
+```
+
+Переупаковать готовый пакет без повторного чтения исходной выгрузки:
+
+```powershell
+configuration-indexer rechunk-package `
+  --manifest ".\out\index-package\manifest.json" `
+  --out-dir ".\out\index-package-rechunked" `
+  --job-id "idx_retry_001" `
+  --max-chunk-bytes 1048576
+```

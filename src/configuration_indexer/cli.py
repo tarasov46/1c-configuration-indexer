@@ -8,8 +8,8 @@ from pathlib import Path
 
 from .detector import detect_source, source_info_to_dict
 from .indexer import IndexOptions, parse_configuration, write_outputs
-from .package import DEFAULT_MAX_CHUNK_BYTES, PackageOptions, write_index_package
-from .package_uploader import PackageUploadOptions, upload_package
+from .package import DEFAULT_MAX_CHUNK_BYTES, PackageOptions, rechunk_package, write_index_package
+from .package_uploader import PackageUploadOptions, retry_failed_chunks, upload_package
 from .project import ProjectIndexOptions, detect_project, parse_project, project_info_to_dict, write_project_manifest
 
 
@@ -80,6 +80,30 @@ def main(argv: list[str] | None = None) -> int:
     upload_package_parser.add_argument("--timeout-seconds", type=float, default=300)
     upload_package_parser.add_argument("--no-complete", action="store_true")
     upload_package_parser.add_argument("--transport", default="binary", choices=["binary", "staged-json"])
+    upload_package_parser.add_argument("--max-retries", type=int, default=3)
+    upload_package_parser.add_argument("--retry-delay-seconds", type=float, default=2.0)
+    upload_package_parser.add_argument("--continue-on-chunk-failure", action="store_true")
+
+    rechunk_parser = subparsers.add_parser("rechunk-package", help="Rebuild package chunks with a different chunk size")
+    rechunk_parser.add_argument("--manifest", required=True)
+    rechunk_parser.add_argument("--out-dir", required=True)
+    rechunk_parser.add_argument("--job-id", default="")
+    rechunk_parser.add_argument("--max-chunk-bytes", type=int, default=1024 * 1024)
+
+    retry_failed_parser = subparsers.add_parser("retry-failed-package", help="Retry failed chunks from upload result JSON")
+    retry_failed_parser.add_argument("--manifest", required=True)
+    retry_failed_parser.add_argument("--failed-log", required=True)
+    retry_failed_parser.add_argument("--upload-url", required=True)
+    retry_failed_parser.add_argument("--token", default="")
+    retry_failed_parser.add_argument("--token-env", default="")
+    retry_failed_parser.add_argument("--auth-header", default="Authorization")
+    retry_failed_parser.add_argument("--auth-scheme", default="Bearer")
+    retry_failed_parser.add_argument("--timeout-seconds", type=float, default=300)
+    retry_failed_parser.add_argument("--no-complete", action="store_true")
+    retry_failed_parser.add_argument("--transport", default="binary", choices=["binary", "staged-json"])
+    retry_failed_parser.add_argument("--max-retries", type=int, default=3)
+    retry_failed_parser.add_argument("--retry-delay-seconds", type=float, default=2.0)
+    retry_failed_parser.add_argument("--continue-on-chunk-failure", action="store_true")
 
     args = parser.parse_args(argv)
     if args.command == "detect":
@@ -178,7 +202,41 @@ def main(argv: list[str] | None = None) -> int:
                 timeout_seconds=args.timeout_seconds,
                 send_complete=not args.no_complete,
                 transport=args.transport,
+                max_retries=args.max_retries,
+                retry_delay_seconds=args.retry_delay_seconds,
+                stop_on_chunk_failure=not args.continue_on_chunk_failure,
             )
+        )
+        print(json.dumps(upload_result.to_dict(), ensure_ascii=False, indent=2))
+        return 0 if upload_result.ok else 3
+
+    if args.command == "rechunk-package":
+        manifest = rechunk_package(
+            source_manifest_path=Path(args.manifest),
+            package_dir=Path(args.out_dir),
+            max_chunk_bytes=args.max_chunk_bytes,
+            job_id=args.job_id,
+        )
+        print(json.dumps(manifest, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "retry-failed-package":
+        upload_result = retry_failed_chunks(
+            PackageUploadOptions(
+                manifest_path=Path(args.manifest),
+                upload_url=args.upload_url,
+                token=args.token,
+                token_env=args.token_env,
+                auth_header=args.auth_header,
+                auth_scheme=args.auth_scheme,
+                timeout_seconds=args.timeout_seconds,
+                send_complete=not args.no_complete,
+                transport=args.transport,
+                max_retries=args.max_retries,
+                retry_delay_seconds=args.retry_delay_seconds,
+                stop_on_chunk_failure=not args.continue_on_chunk_failure,
+            ),
+            Path(args.failed_log),
         )
         print(json.dumps(upload_result.to_dict(), ensure_ascii=False, indent=2))
         return 0 if upload_result.ok else 3
@@ -279,6 +337,9 @@ def run_job(job_path: Path, out_dir_override: Path | None = None, no_upload: boo
                 timeout_seconds=float(upload.get("timeout_seconds") or 300),
                 send_complete=upload.get("send_complete", True) is not False,
                 transport=upload.get("transport") or "binary",
+                max_retries=int(upload.get("max_retries") or 3),
+                retry_delay_seconds=float(upload.get("retry_delay_seconds") or 2),
+                stop_on_chunk_failure=upload.get("continue_on_chunk_failure", False) is not True,
             )
         )
         result["upload"] = upload_result.to_dict()
