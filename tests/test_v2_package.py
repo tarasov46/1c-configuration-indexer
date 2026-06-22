@@ -188,6 +188,10 @@ class V2PackageTests(unittest.TestCase):
             self.assertEqual(relation["relation_kind"], "standard_object_navigation")
 
         self.assertEqual(len(package["configuration_search_chunks"]), 1)
+        chunk = package["configuration_search_chunks"][0]
+        self.assertEqual(len(chunk["content_hash"]), 64)
+        self.assertEqual(chunk["embedding_text_hash"], chunk["content_hash"])
+        self.assertEqual(chunk["embedding_status"], "pending")
         self.assertTrue(package["summary"]["standard_navigation_profile"])
         self.assertEqual(package["summary"]["method_entities"], 0)
         self.assertEqual(package["summary"]["query_entities"], 0)

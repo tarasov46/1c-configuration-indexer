@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "configuration-indexer"
-version = "0.1.2"
+version = "0.1.3"
 description = "Local indexer for 1C configuration XML/BSL exports."
 readme = "README.md"
 requires-python = ">=3.10"

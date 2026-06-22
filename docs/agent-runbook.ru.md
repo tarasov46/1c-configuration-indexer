@@ -9,7 +9,8 @@
 5. Запускает индексатор командой `configuration-indexer run-job --job indexing-job.json`.
 6. Проверяет статус через admin MCP status/list tool.
 7. Для клиентских проектов и расширений работает с данными, когда job перешел в `completed`.
-8. Для типовой конфигурации дополнительно привязывает `standard_snapshot_id` к релизу через admin MCP release-link/finalize tool.
+8. Запускает embedding worker для pending chunks или передает это admin MCP/НейроКор.
+9. Для типовой конфигурации дополнительно привязывает `standard_snapshot_id` к релизу через admin MCP release-link/finalize tool.
 
 Агент не должен читать XML, BSL, jsonl, gzip chunks или большие JSON-пакеты в чат. Все тяжелые данные передает сам индексатор.
 
@@ -67,9 +68,30 @@ work/
 
 - job завершился без ошибок;
 - `configuration_entities` содержит объекты/методы/формы;
-- `configuration_search_chunks` содержит карточки объектов;
+- `configuration_search_chunks` содержит карточки объектов, `content_hash` и статус embedding;
 - поиск через `search_configuration_cards` находит объекты из нескольких расширений;
 - `get_configuration_base_profile` показывает нужную версию базы и слои расширений.
+
+## Embeddings / RAG
+
+После upload карточки уже лежат в `configuration_search_chunks`, но могут быть в статусе `pending`. Проверить очередь:
+
+```sql
+select public.configuration_v2_embedding_queue_stats(null::text[]);
+```
+
+Запустить embedding worker из доверенного окружения:
+
+```powershell
+configuration-indexer embed-chunks `
+  --supabase-url "https://<project-ref>.supabase.co" `
+  --supabase-key-env SUPABASE_SERVICE_ROLE_KEY `
+  --openai-api-key-env OPENAI_API_KEY `
+  --model text-embedding-3-small `
+  --batch-size 64
+```
+
+Если объект не изменился при повторной индексации, старый embedding сохраняется по `content_hash`. Если карточка изменилась, только этот chunk становится `pending` и переобрабатывается.
 
 ## Восстановление после сбоя загрузки
 

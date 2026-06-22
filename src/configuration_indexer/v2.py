@@ -589,6 +589,7 @@ def search_chunk_row(
     metadata: dict[str, Any],
 ) -> dict[str, Any]:
     text = normalize_text(content)
+    content_hash = sha256_text(content)
     return {
         "id": chunk_id,
         "snapshot_id": snapshot_id,
@@ -598,6 +599,12 @@ def search_chunk_row(
         "content": content,
         "search_text": build_search_text([title, text]),
         "embedding": None,
+        "content_hash": content_hash,
+        "embedding_text_hash": content_hash,
+        "embedding_model": "",
+        "embedding_status": "pending",
+        "embedding_error": "",
+        "embedding_attempts": 0,
         "metadata": sanitize_json(metadata),
     }
 
@@ -772,3 +779,7 @@ def safe_part(value: str) -> str:
 
 def sha1_text(value: str) -> str:
     return hashlib.sha1((value or "").encode("utf-8")).hexdigest()
+
+
+def sha256_text(value: str) -> str:
+    return hashlib.sha256((value or "").encode("utf-8")).hexdigest()

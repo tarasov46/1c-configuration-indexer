@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .detector import detect_source, source_info_to_dict
+from .embeddings import DEFAULT_OPENAI_EMBEDDING_MODEL, EmbeddingWorkerOptions, run_embedding_worker
 from .indexer import IndexOptions, parse_configuration, write_outputs
 from .package import DEFAULT_MAX_CHUNK_BYTES, PackageOptions, rechunk_package, write_index_package
 from .package_uploader import PackageUploadOptions, retry_failed_chunks, upload_package
@@ -104,6 +105,21 @@ def main(argv: list[str] | None = None) -> int:
     retry_failed_parser.add_argument("--max-retries", type=int, default=3)
     retry_failed_parser.add_argument("--retry-delay-seconds", type=float, default=2.0)
     retry_failed_parser.add_argument("--continue-on-chunk-failure", action="store_true")
+
+    embed_parser = subparsers.add_parser("embed-chunks", help="Build embeddings for pending configuration_search_chunks")
+    embed_parser.add_argument("--supabase-url", required=True)
+    embed_parser.add_argument("--supabase-key", default="")
+    embed_parser.add_argument("--supabase-key-env", default="SUPABASE_SERVICE_ROLE_KEY")
+    embed_parser.add_argument("--openai-api-key", default="")
+    embed_parser.add_argument("--openai-api-key-env", default="OPENAI_API_KEY")
+    embed_parser.add_argument("--openai-base-url", default="https://api.openai.com/v1")
+    embed_parser.add_argument("--model", default=DEFAULT_OPENAI_EMBEDDING_MODEL)
+    embed_parser.add_argument("--batch-size", type=int, default=64)
+    embed_parser.add_argument("--limit", type=int, default=0)
+    embed_parser.add_argument("--snapshot-id", action="append", default=[])
+    embed_parser.add_argument("--retry-failed-after-minutes", type=int, default=60)
+    embed_parser.add_argument("--sleep-seconds", type=float, default=0.0)
+    embed_parser.add_argument("--timeout-seconds", type=float, default=120.0)
 
     args = parser.parse_args(argv)
     if args.command == "detect":
@@ -240,6 +256,27 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(upload_result.to_dict(), ensure_ascii=False, indent=2))
         return 0 if upload_result.ok else 3
+
+    if args.command == "embed-chunks":
+        result = run_embedding_worker(
+            EmbeddingWorkerOptions(
+                supabase_url=args.supabase_url,
+                supabase_key=args.supabase_key,
+                supabase_key_env=args.supabase_key_env,
+                openai_api_key=args.openai_api_key,
+                openai_api_key_env=args.openai_api_key_env,
+                openai_base_url=args.openai_base_url,
+                model=args.model,
+                batch_size=args.batch_size,
+                limit=args.limit,
+                snapshot_ids=args.snapshot_id or [],
+                retry_failed_after_minutes=args.retry_failed_after_minutes,
+                sleep_seconds=args.sleep_seconds,
+                timeout_seconds=args.timeout_seconds,
+            )
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result.get("ok") else 4
 
     parser.print_help()
     return 1

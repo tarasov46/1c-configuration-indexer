@@ -104,6 +104,7 @@ The package format is compact v2:
 
 - `configuration_entities` stores navigation entities in one table.
 - `configuration_search_chunks` stores RAG-ready text chunks without requiring embeddings during upload.
+- Each search chunk has a stable `content_hash` / `embedding_text_hash`. Re-indexing the same object keeps its existing embedding when the card text did not change; changed cards go back to `pending`.
 - `configuration_relations` stores compact references between entities.
 - Client-memory `bases` remains the source of truth for `base_id`, `client_id`, configuration name, and configuration version.
 - Snapshot ids are stable: standard releases use `standard:<product>:<version>`, and project extensions use `extension:<client>:<base>:<extension>:<version>`. Re-indexing the same source is a replacement, not an ever-growing history.
@@ -112,6 +113,44 @@ The package format is compact v2:
 - Full BSL/query text is not the database source of truth. Supabase stores path, line numbers, hashes, lengths and short previews; exact code stays in Git/src.
 - Standard configurations use a compact navigation profile: object cards, objects, fields, forms, templates, modules, and top aggregated object-level relations. Full method/query rows are intentionally omitted for standard releases.
 - Extensions and small client customizations stay detailed because client changes are the main analysis surface.
+
+## RAG Embeddings
+
+Upload is intentionally separated from embedding generation. The indexer uploads compact object cards first; embeddings are built afterward from `configuration_search_chunks.content` through Supabase RPCs. XML/BSL source files are never sent through chat.
+
+Queue status:
+
+```sql
+select public.configuration_v2_embedding_queue_stats(null::text[]);
+```
+
+Run embeddings from a trusted admin environment:
+
+```powershell
+.\.venv\Scripts\configuration-indexer.exe embed-chunks `
+  --supabase-url "https://<project-ref>.supabase.co" `
+  --supabase-key-env SUPABASE_SERVICE_ROLE_KEY `
+  --openai-api-key-env OPENAI_API_KEY `
+  --model text-embedding-3-small `
+  --batch-size 64
+```
+
+For a single snapshot:
+
+```powershell
+.\.venv\Scripts\configuration-indexer.exe embed-chunks `
+  --supabase-url "https://<project-ref>.supabase.co" `
+  --snapshot-id "standard:erp:2.5.27.47" `
+  --limit 500
+```
+
+After a large first embedding pass, create the vector index once:
+
+```sql
+select public.configuration_v2_create_search_chunk_embedding_index();
+```
+
+Search tools can use `configuration_v2_search_chunks_hybrid`: pass normal query text, and optionally a query embedding string when the MCP workflow is ready to do vector search.
 
 ## Upload Existing Package
 
