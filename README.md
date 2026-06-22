@@ -58,12 +58,13 @@ MCP should return a small job JSON. Example:
 
 Production flow for an agent:
 
-1. Call the admin configuration MCP prepare tool.
-2. Save `data.indexing_job` as `indexing-job.json`.
-3. Run this indexer with `run-job`.
-4. Check the job with the admin MCP status tool.
-5. For client projects and extensions, use the data after the upload job is `completed`.
-6. For standard releases, link the imported standard snapshot to the product release with the admin MCP release-link/finalize tool.
+1. For standard releases, call the admin configuration MCP prepare tool.
+2. For client extensions, call the normal configuration MCP prepare tool.
+3. Save `data.indexing_job` as `indexing-job.json`.
+4. Run this indexer with `run-job`.
+5. Check the job status from configuration MCP or admin MCP.
+6. For client projects and extensions, use the data after the upload job is `completed`.
+7. For standard releases, link the imported standard snapshot to the product release with the admin MCP release-link/finalize tool.
 
 The job must contain enough context for extensions-only projects:
 
@@ -107,7 +108,7 @@ The package format is compact v2:
 - Each search chunk has a stable `content_hash` / `embedding_text_hash`. Re-indexing the same object keeps its existing embedding when the card text did not change; changed cards go back to `pending`.
 - `configuration_relations` stores compact references between entities.
 - Client-memory `bases` remains the source of truth for `base_id`, `client_id`, configuration name, and configuration version.
-- Snapshot ids are stable: standard releases use `standard:<product>:<version>`, and project extensions use `extension:<client>:<base>:<extension>:<version>`. Re-indexing the same source is a replacement, not an ever-growing history.
+- Snapshot ids are stable: standard releases use `standard:<product>:<version>`, and project extensions use `extension:<client>:<base>:<extension>`. Re-indexing the same client extension is a replacement of the current layer, not an ever-growing history.
 - `manifest.json` contains `snapshot_ids`; the upload side can purge old rows for those snapshots before importing fresh chunks.
 - Local paths such as `C:\Users\...` are stripped from package metadata before upload.
 - Full BSL/query text is not the database source of truth. Supabase stores path, line numbers, hashes, lengths and short previews; exact code stays in Git/src.
@@ -116,7 +117,7 @@ The package format is compact v2:
 
 ## RAG Embeddings
 
-Upload is intentionally separated from embedding generation. The indexer uploads compact object cards first; embeddings are built afterward from `configuration_search_chunks.content` through Supabase RPCs. XML/BSL source files are never sent through chat.
+Upload is intentionally separated from embedding generation. The indexer uploads compact object cards first; embeddings are built afterward from `configuration_search_chunks.content` through a scheduled n8n/NeuroCore workflow. XML/BSL source files are never sent through chat.
 
 Queue status:
 
@@ -124,7 +125,7 @@ Queue status:
 select public.configuration_v2_embedding_queue_stats(null::text[]);
 ```
 
-Run embeddings from a trusted admin environment:
+The local worker is only a fallback for emergency/manual runs from a trusted admin environment:
 
 ```powershell
 .\.venv\Scripts\configuration-indexer.exe embed-chunks `

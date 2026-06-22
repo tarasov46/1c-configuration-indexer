@@ -75,6 +75,8 @@ class ProjectDiscoveryTests(unittest.TestCase):
                     product_code="erp",
                     release_version="2.5.27.47",
                     standard_snapshot_id="standard:erp:2.5.27.47",
+                    client_id="client",
+                    base_id="base",
                     include_code_text=False,
                 )
             )
@@ -86,6 +88,7 @@ class ProjectDiscoveryTests(unittest.TestCase):
         self.assertEqual(project["summary"]["product_code"], "erp")
         self.assertEqual(project["summary"]["release_version"], "2.5.27.47")
         self.assertEqual(project["project_info"]["layout"], "exchanges")
+        self.assertEqual(project["project_info"]["extensions"][0]["snapshot_id"], "extension:client:base:ExtA")
 
     def test_detects_exchanges_folder_as_project_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

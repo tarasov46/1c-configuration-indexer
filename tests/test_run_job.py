@@ -60,10 +60,12 @@ class RunJobTests(unittest.TestCase):
             )
 
             result = run_job(job_path, no_upload=True)
+            manifest = json.loads(Path(result["manifest_path"]).read_text(encoding="utf-8"))
 
         self.assertTrue(result["ok"], result)
         self.assertEqual(result["summary"]["search_chunks"], 0)
         self.assertEqual(result["summary"]["snapshots"], 1)
+        self.assertEqual(manifest["snapshot_ids"], ["extension:client:base:ExtA"])
         self.assertTrue(result["package_dir"].endswith("work\\1c-configuration-indexer\\out\\idx_relative_path"))
 
 

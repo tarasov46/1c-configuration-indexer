@@ -4,12 +4,12 @@
 
 1. Получает у пользователя путь к выгрузке или Git URL клиентского репозитория.
 2. Для клиентской базы проверяет, что в client-memory есть `client_id`, `base_id` и версия конфигурации.
-3. Вызывает admin MCP prepare tool и получает `data.indexing_job`.
+3. Для типовой конфигурации вызывает admin MCP prepare tool; для клиентских расширений вызывает обычный configuration MCP prepare tool.
 4. Сохраняет `data.indexing_job` в `indexing-job.json`.
 5. Запускает индексатор командой `configuration-indexer run-job --job indexing-job.json`.
-6. Проверяет статус через admin MCP status/list tool.
+6. Для клиентских расширений проверяет статус через обычный configuration MCP, для типовых загрузок через admin MCP.
 7. Для клиентских проектов и расширений работает с данными, когда job перешел в `completed`.
-8. Запускает embedding worker для pending chunks или передает это admin MCP/НейроКор.
+8. Не запускает embeddings вручную: RAG-обработка идет регламентным workflow в НейроКор.
 9. Для типовой конфигурации дополнительно привязывает `standard_snapshot_id` к релизу через admin MCP release-link/finalize tool.
 
 Агент не должен читать XML, BSL, jsonl, gzip chunks или большие JSON-пакеты в чат. Все тяжелые данные передает сам индексатор.
@@ -80,7 +80,7 @@ work/
 select public.configuration_v2_embedding_queue_stats(null::text[]);
 ```
 
-Запустить embedding worker из доверенного окружения:
+Основной способ обработки RAG - регламентный workflow в НейроКор. Локальный worker нужен только как аварийный/ручной fallback из доверенного окружения:
 
 ```powershell
 configuration-indexer embed-chunks `
@@ -92,6 +92,14 @@ configuration-indexer embed-chunks `
 ```
 
 Если объект не изменился при повторной индексации, старый embedding сохраняется по `content_hash`. Если карточка изменилась, только этот chunk становится `pending` и переобрабатывается.
+
+Клиентские расширения не версионируются в Supabase как история. Snapshot расширения стабилен:
+
+```text
+extension:<client_id>:<base_id>:<extension_name>
+```
+
+При повторной загрузке старое текущее состояние этого слоя заменяется новым.
 
 ## Восстановление после сбоя загрузки
 

@@ -127,8 +127,9 @@ def discover_extensions(root: Path, base_src: Path | None, warnings: list[str]) 
 
 def extension_identity(info: SourceInfo, fallback_name: str) -> tuple[str, str]:
     name = info.name or fallback_name
-    version = info.version or info.extension_compatibility_mode or ""
-    return name.strip().casefold(), version.strip().casefold()
+    # Client extensions are indexed as the current state of a layer, not as a
+    # version history. The extension name is the stable identity inside a base.
+    return name.strip().casefold(), ""
 
 
 def parse_project(options: ProjectIndexOptions) -> dict:
@@ -364,14 +365,12 @@ def parse_project(options: ProjectIndexOptions) -> dict:
 
 
 def make_project_extension_snapshot_id(client_id: str, base_id: str, extension_name: str, info: SourceInfo) -> str:
-    version = info.version or info.extension_compatibility_mode or "no_version"
     return ":".join(
         [
             "extension",
             safe_id_part(client_id or "client"),
             safe_id_part(base_id or "base"),
             safe_id_part(extension_name or "extension"),
-            safe_id_part(version),
         ]
     )
 
