@@ -173,7 +173,7 @@ class V2PackageTests(unittest.TestCase):
         self.assertIn("field", entity_types)
         self.assertIn("form", entity_types)
         self.assertIn("module", entity_types)
-        self.assertNotIn("method", entity_types)
+        self.assertIn("method", entity_types)
         self.assertNotIn("query", entity_types)
 
         relation_types = {row["relation_type"] for row in package["configuration_relations"]}
@@ -193,7 +193,7 @@ class V2PackageTests(unittest.TestCase):
         self.assertEqual(chunk["embedding_text_hash"], chunk["content_hash"])
         self.assertEqual(chunk["embedding_status"], "pending")
         self.assertTrue(package["summary"]["standard_navigation_profile"])
-        self.assertEqual(package["summary"]["method_entities"], 0)
+        self.assertEqual(package["summary"]["method_entities"], 1)
         self.assertEqual(package["summary"]["query_entities"], 0)
 
 

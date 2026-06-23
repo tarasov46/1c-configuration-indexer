@@ -112,7 +112,7 @@ The package format is compact v2:
 - `manifest.json` contains `snapshot_ids`; the upload side can purge old rows for those snapshots before importing fresh chunks.
 - Local paths such as `C:\Users\...` are stripped from package metadata before upload.
 - Full BSL/query text is not the database source of truth. Supabase stores path, line numbers, hashes, lengths and short previews; exact code stays in Git/src.
-- Standard configurations use a compact navigation profile: object cards, objects, fields, forms, templates, modules, and top aggregated object-level relations. Full method/query rows are intentionally omitted for standard releases.
+- Standard configurations use a compact navigation profile: object cards, objects, fields, forms, templates, modules, exported methods, and top aggregated object-level relations. Non-exported method rows and query rows are intentionally omitted for standard releases.
 - Extensions and small client customizations stay detailed because client changes are the main analysis surface.
 
 ## RAG Embeddings

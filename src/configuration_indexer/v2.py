@@ -14,7 +14,7 @@ QUERY_CHUNK_PREVIEW_CHARS = 600
 CARD_CHUNK_MAX_CHARS = 1600
 MAX_QUERY_CHUNKS = 1000
 MAX_TEXT_PREVIEW_ROWS = 5000
-STANDARD_NAVIGATION_ENTITY_TYPES = {"object", "field", "form", "template", "module"}
+STANDARD_NAVIGATION_ENTITY_TYPES = {"object", "field", "form", "template", "module", "method"}
 STANDARD_RELATION_TYPES = {
     "external_call": "calls_object",
     "uses_metadata_object": "uses_object",
@@ -200,8 +200,6 @@ def build_entities(
         )
 
     for method in index.get("configuration_methods") or []:
-        if standard_navigation_only:
-            continue
         if method.get("snapshot_id") in standard_snapshot_ids and not method.get("is_export"):
             continue
         data = compact_data(method, ["is_function", "is_export", "signature", "start_line", "end_line", "metadata"])
@@ -473,12 +471,17 @@ def build_search_chunks(index: dict[str, Any], aliases_by_entity: dict[str, list
         text = card.get("text") or ""
         if not text:
             continue
+        entity_id = card.get("object_id") or card.get("method_id") or card.get("query_id")
+        aliases = aliases_by_entity.get(entity_id or "", [])
         metadata = compact_data(card, ["card_type", "source", "confidence", "metadata"])
+        if aliases:
+            metadata["aliases"] = aliases
+            text = "Алиасы: " + "; ".join(aliases) + "\n\n" + text
         chunks.append(
             search_chunk_row(
                 chunk_id=f"{card.get('id')}:chunk:0001",
                 snapshot_id=card.get("snapshot_id"),
-                entity_id=card.get("object_id") or card.get("method_id") or card.get("query_id"),
+                entity_id=entity_id,
                 chunk_type=card.get("card_type") or "summary",
                 title=card.get("title") or "",
                 content=first_chars(text, CARD_CHUNK_MAX_CHARS),
